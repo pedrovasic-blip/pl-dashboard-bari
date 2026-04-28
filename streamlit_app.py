@@ -35,6 +35,11 @@ CSS = """
         padding: 18px 18px;
         min-height: 118px;
         box-shadow: 0 10px 26px rgba(0,0,0,.20);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
     }
     .kpi-label { color: #9fb2df; font-size: .78rem; margin-bottom: 10px; }
     .kpi-value { color: #ffffff; font-size: 1.65rem; font-weight: 850; line-height: 1.15; }
@@ -257,10 +262,12 @@ def classe_variacao(valor):
     return "delta-neutral"
 
 
-def card(titulo, valor, ajuda, variacao=None):
+def card(titulo, valor, ajuda="", variacao=None):
     delta_html = ""
     if variacao is not None:
         delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
+
+    ajuda_html = f'<div class="kpi-help">{ajuda}</div>' if ajuda else ""
 
     st.markdown(
         f"""
@@ -268,7 +275,7 @@ def card(titulo, valor, ajuda, variacao=None):
             <div class="kpi-label">{titulo}</div>
             <div class="kpi-value">{formatar_moeda(valor)}</div>
             {delta_html}
-            <div class="kpi-help">{ajuda}</div>
+            {ajuda_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -500,11 +507,6 @@ periodos_disponiveis = (
 )
 
 periodo_padrao = len(periodos_disponiveis) - 1
-periodo_sel = st.sidebar.selectbox(
-    "Período dos cards",
-    periodos_disponiveis["Período"].tolist(),
-    index=periodo_padrao,
-)
 
 st.sidebar.markdown(
     """
@@ -523,6 +525,15 @@ tab_resultados, tab_pnl_mensal, tab_pnl_acum, tab_base = st.tabs(
 )
 
 with tab_resultados:
+    st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
+    col_filtro_mes, col_filtro_vazio = st.columns([1, 3])
+    with col_filtro_mes:
+        periodo_sel = st.selectbox(
+            "Mês de referência",
+            periodos_disponiveis["Período"].tolist(),
+            index=periodo_padrao,
+        )
+
     df_principais = montar_resultados_principais(df_resultado)
     df_cards = df_principais[df_principais["Período"] == periodo_sel].copy()
     periodo_ant = periodo_anterior(periodos_disponiveis, periodo_sel)
@@ -543,7 +554,7 @@ with tab_resultados:
             valor = linha["Valor"].sum() if not linha.empty else 0
             origem = linha["Linha"].iloc[0] if not linha.empty else "Linha não encontrada"
             variacao = variacao_mes_anterior(df_principais, indicador, periodo_sel, periodo_ant)
-            card(indicador, valor, f"{periodo_sel} • {origem}", variacao=variacao)
+            card(indicador, valor, variacao=variacao)
 
     st.markdown('<div class="section-title">Evolução histórica dos resultados</div>', unsafe_allow_html=True)
 
