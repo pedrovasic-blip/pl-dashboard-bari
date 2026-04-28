@@ -75,12 +75,15 @@ CSS = """
     table.pnl-matrix tbody td:first-child {
         text-align: left;
         color: #ffffff;
-        font-weight: 400;
+        font-weight: 850;
         min-width: 250px;
     }
     table.pnl-matrix tbody tr.main-line td {
         background: #162338;
         color: #ffffff;
+        font-weight: 400;
+    }
+    table.pnl-matrix tbody tr.main-line td:first-child {
         font-weight: 900;
     }
     table.pnl-matrix tbody tr.result-line td {
@@ -91,19 +94,28 @@ CSS = """
     }
     table.pnl-matrix td.neg-value {
         color: #ef4444;
-        font-weight: 900;
+        font-weight: 400;
+    }
+    table.pnl-matrix tbody tr.result-line td.neg-value {
+        font-weight: 950;
     }
     table.pnl-matrix td.delta-positive,
-    table.pnl-matrix tbody tr.main-line td.delta-positive,
-    table.pnl-matrix tbody tr.result-line td.delta-positive {
+    table.pnl-matrix tbody tr.main-line td.delta-positive {
         color: #22c55e !important;
-        font-weight: 850 !important;
+        font-weight: 400 !important;
     }
     table.pnl-matrix td.delta-negative,
-    table.pnl-matrix tbody tr.main-line td.delta-negative,
+    table.pnl-matrix tbody tr.main-line td.delta-negative {
+        color: #ef4444 !important;
+        font-weight: 400 !important;
+    }
+    table.pnl-matrix tbody tr.result-line td.delta-positive {
+        color: #22c55e !important;
+        font-weight: 950 !important;
+    }
     table.pnl-matrix tbody tr.result-line td.delta-negative {
         color: #ef4444 !important;
-        font-weight: 850 !important;
+        font-weight: 950 !important;
     }
     table.pnl-matrix th.product-header {
         background: #101a2d;
@@ -539,6 +551,20 @@ def carregar_base_dash(arquivo):
         df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
     return df
 
+
+
+def obter_periodo_pnl_mensal(arquivo):
+    try:
+        bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal", header=None, engine="openpyxl")
+        for _, row in bruto.iterrows():
+            for valor in row.tolist():
+                data = converter_periodo(valor)
+                if data is not None and pd.Timestamp(data).year >= 2020:
+                    return nome_periodo(data), pd.Timestamp(data)
+    except Exception:
+        pass
+
+    return "Período atual", None
 
 
 @st.cache_data(show_spinner=False)
@@ -1230,8 +1256,17 @@ with tab_pnl_mensal:
         df_pnl = carregar_pnl_mensal(arquivo)
         linhas_principais = obter_linhas_principais_pnl(df_pnl)
 
+        periodo_pnl, data_pnl = obter_periodo_pnl_mensal(arquivo)
+
         st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-        col_produto, col_espaco = st.columns([1, 3])
+        col_data, col_produto, col_espaco = st.columns([1, 1, 2])
+        with col_data:
+            data_sel_pnl = st.selectbox(
+                "Data base",
+                [periodo_pnl],
+                index=0,
+                key="data_pnl_mensal",
+            )
         with col_produto:
             produto_sel_pnl = st.selectbox(
                 "Produto",
