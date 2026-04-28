@@ -795,6 +795,256 @@ def variacao_pnl_mes_anterior(df_pnl_completo, produto, linha, periodo_atual):
     return (valor_atual - valor_anterior) / abs(valor_anterior)
 
 
+def filtrar_pnl_acumulado(df_pnl_completo, periodo_atual):
+    linha_periodo = df_pnl_completo[df_pnl_completo["Periodo"] == periodo_atual]
+
+    if linha_periodo.empty:
+        return df_pnl_completo.iloc[0:0].copy()
+
+    data_atual = linha_periodo["Data"].iloc[0]
+    ano_atual = pd.Timestamp(data_atual).year
+    data_inicio = pd.Timestamp(ano_atual, 1, 1)
+
+    base = df_pnl_completo[
+        (df_pnl_completo["Data"] >= data_inicio)
+        & (df_pnl_completo["Data"] <= data_atual)
+    ].copy()
+
+    return base
+
+
+def agregar_pnl_acumulado(df_pnl_periodo):
+    if df_pnl_periodo.empty:
+        return df_pnl_periodo.copy()
+
+    base_valores = df_pnl_periodo[df_pnl_periodo["Métrica"].isin(["Realizado", "Orçado"])].copy()
+
+    agrupado = (
+        base_valores
+        .groupby(["Produto", "Linha", "Linha_Normalizada", "Métrica", "Ordem_Linha"], as_index=False)["Valor"]
+        .sum()
+    )
+
+    linhas_delta = []
+
+    base_pivot = agrupado.pivot_table(
+        index=["Produto", "Linha", "Linha_Normalizada", "Ordem_Linha"],
+        columns="Métrica",
+        values="Valor",
+        aggfunc="sum",
+    ).reset_index()
+
+    for _, row in base_pivot.iterrows():
+        realizado = row.get("Realizado", 0)
+        orcado = row.get("Orçado", 0)
+
+        delta_rs = realizado - orcado
+        delta_pct = pd.NA if orcado == 0 else delta_rs / abs(orcado)
+
+        for metrica, valor in [("Δ %", delta_pct), ("Δ R$", delta_rs)]:
+            linhas_delta.append(
+                {
+                    "Produto": row["Produto"],
+                    "Linha": row["Linha"],
+                    "Linha_Normalizada": row["Linha_Normalizada"],
+                    "Métrica": metrica,
+                    "Ordem_Linha": row["Ordem_Linha"],
+                    "Valor": valor,
+                }
+            )
+
+    df_delta = pd.DataFrame(linhas_delta)
+
+    return pd.concat([agrupado, df_delta], ignore_index=True)
+
+
+def variacao_pnl_acumulado_mes_anterior(df_pnl_completo, produto, linha, periodo_atual):
+    linha_atual = df_pnl_completo[
+        (df_pnl_completo["Produto"] == produto)
+        & (df_pnl_completo["Linha"] == linha)
+        & (df_pnl_completo["Métrica"] == "Realizado")
+        & (df_pnl_completo["Periodo"] == periodo_atual)
+    ]
+
+    if linha_atual.empty:
+        return None
+
+    data_atual = linha_atual["Data"].iloc[0]
+    ano_atual = pd.Timestamp(data_atual).year
+    data_inicio = pd.Timestamp(ano_atual, 1, 1)
+
+    meses_anteriores = (
+        df_pnl_completo[
+            (df_pnl_completo["Produto"] == produto)
+            & (df_pnl_completo["Linha"] == linha)
+            & (df_pnl_completo["Métrica"] == "Realizado")
+            & (df_pnl_completo["Data"] < data_atual)
+            & (df_pnl_completo["Data"] >= data_inicio)
+        ]
+        .sort_values("Data")
+    )
+
+    if meses_anteriores.empty:
+        return None
+
+    valor_acumulado_atual = df_pnl_completo[
+        (df_pnl_completo["Produto"] == produto)
+        & (df_pnl_completo["Linha"] == linha)
+        & (df_pnl_completo["Métrica"] == "Realizado")
+        & (df_pnl_completo["Data"] >= data_inicio)
+        & (df_pnl_completo["Data"] <= data_atual)
+    ]["Valor"].sum()
+
+    data_anterior = meses_anteriores["Data"].max()
+
+    valor_acumulado_anterior = df_pnl_completo[
+        (df_pnl_completo["Produto"] == produto)
+        & (df_pnl_completo["Linha"] == linha)
+        & (df_pnl_completo["Métrica"] == "Realizado")
+        & (df_pnl_completo["Data"] >= data_inicio)
+        & (df_pnl_completo["Data"] <= data_anterior)
+    ]["Valor"].sum()
+
+    if valor_acumulado_anterior == 0:
+        return None
+
+    return (valor_acumulado_atual - valor_acumulado_anterior) / abs(valor_acumulado_anterior)
+
+
+def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
+    periodos_pnl = obter_periodos_pnl_mensal_anualizado(arquivo)
+    lista_periodos_pnl = [item["Período"] for item in periodos_pnl]
+
+    st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
+    col_data, col_produto, col_espaco = st.columns([1, 1, 2])
+
+    with col_data:
+        data_sel_pnl = st.selectbox(
+            "Data base",
+            lista_periodos_pnl,
+            index=len(lista_periodos_pnl) - 1,
+            key=f"data_pnl_{pagina.lower()}",
+        )
+
+    with col_produto:
+        produto_sel_pnl = st.selectbox(
+            "Produto",
+            ["Consignado", "Imobiliário", "Total"],
+            index=2,
+            key=f"produto_pnl_{pagina.lower()}",
+        )
+
+    if pagina == "Acumulado":
+        df_pnl_periodo = filtrar_pnl_acumulado(df_pnl_completo, data_sel_pnl)
+        df_pnl = agregar_pnl_acumulado(df_pnl_periodo)
+        titulo_cards = "Principais linhas do P&L Acumulado"
+        titulo_comparativo = "Realizado x Orçado acumulado por linha principal"
+        titulo_resultado_produto = "Resultado Contábil acumulado por produto"
+        titulo_tabela = "Resumo acumulado das linhas principais por produto"
+    else:
+        df_pnl = df_pnl_completo[df_pnl_completo["Periodo"] == data_sel_pnl].copy()
+        titulo_cards = "Principais linhas do P&L Mensal"
+        titulo_comparativo = "Realizado x Orçado por linha principal"
+        titulo_resultado_produto = "Resultado Contábil por produto"
+        titulo_tabela = "Resumo das linhas principais por produto"
+
+    linhas_principais = obter_linhas_principais_pnl(df_pnl)
+
+    st.markdown(f'<div class="section-title">{titulo_cards}</div>', unsafe_allow_html=True)
+
+    for inicio in range(0, len(linhas_principais), 4):
+        if inicio > 0:
+            st.markdown('<div class="card-row-spacer"></div>', unsafe_allow_html=True)
+
+        cols_cards = st.columns(4)
+        for col_card, linha in zip(cols_cards, linhas_principais[inicio:inicio + 4]):
+            realizado = valor_pnl(df_pnl, produto_sel_pnl, linha, "Realizado")
+
+            if pagina == "Acumulado":
+                variacao = variacao_pnl_acumulado_mes_anterior(df_pnl_completo, produto_sel_pnl, linha, data_sel_pnl)
+            else:
+                variacao = variacao_pnl_mes_anterior(df_pnl_completo, produto_sel_pnl, linha, data_sel_pnl)
+
+            with col_card:
+                card_pnl(linha, realizado, variacao=variacao)
+
+    st.markdown(f'<div class="section-title">{titulo_comparativo}</div>', unsafe_allow_html=True)
+
+    base_grafico = df_pnl[
+        (df_pnl["Produto"] == produto_sel_pnl)
+        & (df_pnl["Linha"].isin(linhas_principais))
+        & (df_pnl["Métrica"].isin(["Realizado", "Orçado"]))
+    ].copy()
+
+    ordem_linhas = {linha: i for i, linha in enumerate(linhas_principais)}
+    base_grafico["Ordem"] = base_grafico["Linha"].map(ordem_linhas)
+    base_grafico = base_grafico.sort_values("Ordem", ascending=False)
+
+    fig_comp = px.bar(
+        base_grafico,
+        x="Valor",
+        y="Linha",
+        color="Métrica",
+        orientation="h",
+        barmode="group",
+        labels={"Valor": "Valor", "Linha": "", "Métrica": ""},
+    )
+    fig_comp.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#080f1f",
+        plot_bgcolor="#080f1f",
+        height=470,
+        margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig_comp.update_xaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+    fig_comp.update_yaxes(showgrid=False, zeroline=False)
+    st.plotly_chart(fig_comp, use_container_width=True)
+
+    st.markdown(f'<div class="section-title">{titulo_resultado_produto}</div>', unsafe_allow_html=True)
+    linha_resultado_contabil = next(
+        (linha for linha in linhas_principais if normalizar_texto(linha) in ["resultado contabil", "resultado contábil"]),
+        linhas_principais[-1] if linhas_principais else None,
+    )
+
+    base_produtos = df_pnl[
+        (df_pnl["Linha"] == linha_resultado_contabil)
+        & (df_pnl["Produto"].isin(["Consignado", "Imobiliário", "Total"]))
+        & (df_pnl["Métrica"] == "Realizado")
+    ].copy()
+
+    fig_prod = px.bar(
+        base_produtos,
+        x="Produto",
+        y="Valor",
+        text=base_produtos["Valor"].map(lambda v: formatar_moeda(v).replace("R$ ", "")),
+        labels={"Valor": "Realizado", "Produto": ""},
+    )
+    fig_prod.update_traces(
+        textposition="inside",
+        textfont=dict(size=18, family="Arial Black"),
+        insidetextanchor="middle",
+    )
+    fig_prod.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#080f1f",
+        plot_bgcolor="#080f1f",
+        height=390,
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False,
+    )
+    fig_prod.update_xaxes(showgrid=False, zeroline=False)
+    fig_prod.update_yaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+    st.plotly_chart(fig_prod, use_container_width=True)
+
+    st.markdown(f'<div class="section-title">{titulo_tabela}</div>', unsafe_allow_html=True)
+    matriz_pnl, produtos_matriz, metricas_matriz = montar_matriz_pnl_excel(df_pnl, linhas_principais)
+    st.markdown(
+        tabela_html_pnl_matriz(matriz_pnl, produtos_matriz, metricas_matriz),
+        unsafe_allow_html=True,
+    )
+
+
 def card_pnl(titulo, valor, variacao=None):
     if variacao is None or pd.isna(variacao):
         delta_html = '<div class="kpi-delta delta-neutral">N/D</div>'
@@ -1346,131 +1596,18 @@ with tab_resultados:
 with tab_pnl_mensal:
     try:
         df_pnl_completo = carregar_pnl_mensal(arquivo)
-        df_pnl = df_pnl_completo.copy()
-
-        periodos_pnl = obter_periodos_pnl_mensal_anualizado(arquivo)
-        lista_periodos_pnl = [item["Período"] for item in periodos_pnl]
-
-        st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-        col_data, col_produto, col_espaco = st.columns([1, 1, 2])
-        with col_data:
-            data_sel_pnl = st.selectbox(
-                "Data base",
-                lista_periodos_pnl,
-                index=len(lista_periodos_pnl) - 1,
-                key="data_pnl_mensal",
-            )
-        with col_produto:
-            produto_sel_pnl = st.selectbox(
-                "Produto",
-                ["Consignado", "Imobiliário", "Total"],
-                index=2,
-                key="produto_pnl_mensal",
-            )
-
-        df_pnl = df_pnl[df_pnl["Periodo"] == data_sel_pnl].copy()
-        linhas_principais = obter_linhas_principais_pnl(df_pnl)
-
-        st.markdown('<div class="section-title">Principais linhas do P&L Mensal</div>', unsafe_allow_html=True)
-
-        for inicio in range(0, len(linhas_principais), 4):
-            if inicio > 0:
-                st.markdown('<div class="card-row-spacer"></div>', unsafe_allow_html=True)
-
-            cols_cards = st.columns(4)
-            for col_card, linha in zip(cols_cards, linhas_principais[inicio:inicio + 4]):
-                realizado = valor_pnl(df_pnl, produto_sel_pnl, linha, "Realizado")
-                variacao = variacao_pnl_mes_anterior(df_pnl_completo, produto_sel_pnl, linha, data_sel_pnl)
-                with col_card:
-                    card_pnl(linha, realizado, variacao=variacao)
-
-        st.markdown('<div class="section-title">Realizado x Orçado por linha principal</div>', unsafe_allow_html=True)
-
-        base_grafico = df_pnl[
-            (df_pnl["Produto"] == produto_sel_pnl)
-            & (df_pnl["Linha"].isin(linhas_principais))
-            & (df_pnl["Métrica"].isin(["Realizado", "Orçado"]))
-        ].copy()
-
-        ordem_linhas = {linha: i for i, linha in enumerate(linhas_principais)}
-        base_grafico["Ordem"] = base_grafico["Linha"].map(ordem_linhas)
-        base_grafico = base_grafico.sort_values("Ordem", ascending=False)
-
-        fig_comp = px.bar(
-            base_grafico,
-            x="Valor",
-            y="Linha",
-            color="Métrica",
-            orientation="h",
-            barmode="group",
-            labels={"Valor": "Valor", "Linha": "", "Métrica": ""},
-        )
-        fig_comp.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="#080f1f",
-            plot_bgcolor="#080f1f",
-            height=470,
-            margin=dict(l=10, r=10, t=10, b=10),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        )
-        fig_comp.update_xaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
-        fig_comp.update_yaxes(showgrid=False, zeroline=False)
-        st.plotly_chart(fig_comp, use_container_width=True)
-
-        st.markdown('<div class="section-title">Resultado Contábil por produto</div>', unsafe_allow_html=True)
-        linha_resultado_contabil = next(
-            (linha for linha in linhas_principais if normalizar_texto(linha) in ["resultado contabil", "resultado contábil"]),
-            linhas_principais[-1] if linhas_principais else None,
-        )
-
-        base_produtos = df_pnl[
-            (df_pnl["Linha"] == linha_resultado_contabil)
-            & (df_pnl["Produto"].isin(["Consignado", "Imobiliário", "Total"]))
-            & (df_pnl["Métrica"] == "Realizado")
-        ].copy()
-
-        fig_prod = px.bar(
-            base_produtos,
-            x="Produto",
-            y="Valor",
-            text=base_produtos["Valor"].map(lambda v: formatar_moeda(v).replace("R$ ", "")),
-            labels={"Valor": "Realizado", "Produto": ""},
-        )
-        fig_prod.update_traces(
-            textposition="inside",
-            textfont=dict(size=18, family="Arial Black"),
-            insidetextanchor="middle",
-        )
-        fig_prod.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="#080f1f",
-            plot_bgcolor="#080f1f",
-            height=390,
-            margin=dict(l=10, r=10, t=10, b=10),
-            showlegend=False,
-        )
-        fig_prod.update_xaxes(showgrid=False, zeroline=False)
-        fig_prod.update_yaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
-        st.plotly_chart(fig_prod, use_container_width=True)
-
-        st.markdown('<div class="section-title">Resumo das linhas principais por produto</div>', unsafe_allow_html=True)
-        matriz_pnl, produtos_matriz, metricas_matriz = montar_matriz_pnl_excel(df_pnl, linhas_principais)
-        st.markdown(
-            tabela_html_pnl_matriz(matriz_pnl, produtos_matriz, metricas_matriz),
-            unsafe_allow_html=True,
-        )
+        render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal")
 
     except Exception as erro:
         st.info(f"Não consegui carregar a aba P&L Mensal: {erro}")
 
 with tab_pnl_acum:
     try:
-        df_base = carregar_base_dash(arquivo)
-        df_acum = df_base[df_base["Visao"].str.lower().eq("acumulado")].copy()
-        st.markdown('<div class="section-title">P&L Acumulado</div>', unsafe_allow_html=True)
-        st.dataframe(df_acum, use_container_width=True, hide_index=True)
+        df_pnl_completo = carregar_pnl_mensal(arquivo)
+        render_pnl_page(df_pnl_completo, arquivo, pagina="Acumulado")
+
     except Exception as erro:
-        st.info(f"Não consegui carregar a aba BASE_DASH para P&L Acumulado: {erro}")
+        st.info(f"Não consegui carregar a aba P&L Acumulado: {erro}")
 
 with tab_base:
     st.markdown('<div class="section-title">Base lida da aba RESULTADO</div>', unsafe_allow_html=True)
