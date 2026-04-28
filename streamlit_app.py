@@ -537,59 +537,65 @@ def variacao_mes_anterior(df_principais, indicador, periodo_atual, periodo_ant):
     return (valor_atual - valor_ant) / abs(valor_ant)
 
 
-def variacao_resultado_total_inicio_ano(df_principais, periodo_atual):
+def resultado_total_acumulado_ano(df_principais, periodo_atual):
     linha_atual = df_principais[
         (df_principais["Indicador"] == "Resultado Total")
         & (df_principais["Período"] == periodo_atual)
     ]
 
     if linha_atual.empty:
-        return None, None, None
+        return None, None, None, None
 
     data_atual = linha_atual["Data"].iloc[0]
     ano_atual = pd.Timestamp(data_atual).year
     data_inicio = pd.Timestamp(ano_atual, 1, 1)
 
-    valor_atual = linha_atual["Valor"].sum()
-
-    linha_inicio = df_principais[
+    base_ano = df_principais[
         (df_principais["Indicador"] == "Resultado Total")
-        & (df_principais["Data"] == data_inicio)
-    ]
+        & (df_principais["Data"] >= data_inicio)
+        & (df_principais["Data"] <= data_atual)
+    ].copy()
 
-    if linha_inicio.empty:
-        return valor_atual, None, None
+    if base_ano.empty:
+        return None, None, None, None
 
-    valor_inicio = linha_inicio["Valor"].sum()
+    valor_acumulado = base_ano["Valor"].sum()
 
-    if valor_inicio == 0:
-        return valor_atual, None, valor_inicio
+    data_mes_anterior = pd.Timestamp(data_atual) - pd.DateOffset(months=1)
+    base_ate_mes_anterior = base_ano[base_ano["Data"] <= data_mes_anterior]
 
-    variacao = (valor_atual - valor_inicio) / abs(valor_inicio)
-    return valor_atual, variacao, valor_inicio
+    valor_acumulado_anterior = base_ate_mes_anterior["Valor"].sum() if not base_ate_mes_anterior.empty else None
+
+    if valor_acumulado_anterior is None or valor_acumulado_anterior == 0:
+        variacao = None
+    else:
+        variacao = (valor_acumulado - valor_acumulado_anterior) / abs(valor_acumulado_anterior)
+
+    return valor_acumulado, variacao, valor_acumulado_anterior, data_inicio
 
 
-def card_variacao_inicio_ano(valor_atual, variacao, valor_inicio, periodo_atual):
-    if valor_atual is None:
+def card_resultado_total_acumulado(valor_acumulado, variacao, valor_acumulado_anterior, periodo_atual):
+    if valor_acumulado is None:
         valor_html = "N/D"
         delta_html = '<div class="side-card-delta delta-neutral">N/D</div>'
         ajuda = "Resultado Total não encontrado"
     else:
-        valor_html = formatar_moeda(valor_atual)
+        valor_html = formatar_moeda(valor_acumulado)
+
         if variacao is None:
             delta_html = '<div class="side-card-delta delta-neutral">N/D</div>'
         else:
             delta_html = f'<div class="side-card-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
 
-        if valor_inicio is None:
-            ajuda = f"{periodo_atual} • sem base em jan/2026"
+        if valor_acumulado_anterior is None:
+            ajuda = f"Acumulado de jan/2026 até {periodo_atual}"
         else:
-            ajuda = f"{periodo_atual} comparado a jan/2026"
+            ajuda = f"Acumulado de jan/2026 até {periodo_atual}"
 
     st.markdown(
         f"""
         <div class="side-card">
-            <div class="side-card-label">Variação do Resultado Total desde o início de 2026</div>
+            <div class="side-card-label">Resultado Total acumulado em 2026</div>
             <div class="side-card-value">{valor_html}</div>
             {delta_html}
             <div class="side-card-help">{ajuda}</div>
@@ -801,10 +807,10 @@ with tab_resultados:
             st.plotly_chart(fig, use_container_width=True)
 
         with col_card_variacao:
-            valor_total_atual, variacao_total_ano, valor_total_inicio = variacao_resultado_total_inicio_ano(
+            valor_acumulado, variacao_acumulado, valor_acumulado_anterior, data_inicio = resultado_total_acumulado_ano(
                 df_principais, periodo_sel
             )
-            card_variacao_inicio_ano(valor_total_atual, variacao_total_ano, valor_total_inicio, periodo_sel)
+            card_resultado_total_acumulado(valor_acumulado, variacao_acumulado, valor_acumulado_anterior, periodo_sel)
 
     st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
