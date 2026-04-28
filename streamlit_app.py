@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 
@@ -93,13 +94,17 @@ CSS = """
         color: #ef4444;
         font-weight: 900;
     }
-    table.pnl-matrix td.delta-positive {
-        color: #22c55e;
-        font-weight: 800;
+    table.pnl-matrix td.delta-positive,
+    table.pnl-matrix tbody tr.main-line td.delta-positive,
+    table.pnl-matrix tbody tr.result-line td.delta-positive {
+        color: #22c55e !important;
+        font-weight: 850 !important;
     }
-    table.pnl-matrix td.delta-negative {
-        color: #ef4444;
-        font-weight: 800;
+    table.pnl-matrix td.delta-negative,
+    table.pnl-matrix tbody tr.main-line td.delta-negative,
+    table.pnl-matrix tbody tr.result-line td.delta-negative {
+        color: #ef4444 !important;
+        font-weight: 850 !important;
     }
     table.pnl-matrix th.product-header {
         background: #101a2d;
@@ -769,9 +774,15 @@ def montar_matriz_pnl_excel(df_pnl, linhas_principais):
             row[(produto, "Orçado")] = orcado
             row[(produto, "Δ %")] = delta_pct
 
-            # Regra de cor solicitada:
-            # Realizado maior que Orçado -> vermelho; caso contrário -> verde.
-            row[(produto, "_delta_bad")] = realizado > orcado
+            # Regra de cor:
+            # Para linhas de despesa/custo negativas, compara o tamanho do gasto em módulo.
+            # Para as demais linhas, compara Realizado > Orçado.
+            if realizado < 0 or orcado < 0:
+                delta_bad = abs(realizado) > abs(orcado)
+            else:
+                delta_bad = realizado > orcado
+
+            row[(produto, "_delta_bad")] = delta_bad
 
             if produto == "Total":
                 row[(produto, "Δ R$")] = delta_rs
@@ -784,6 +795,7 @@ def montar_matriz_pnl_excel(df_pnl, linhas_principais):
 def tabela_html_pnl_matriz(df_matrix, produtos, metricas_por_produto):
     linhas_destaque = {
         normalizar_texto("RECEITAS"),
+        normalizar_texto("Operações de Crédito"),
         normalizar_texto("DESPESAS DE ORIGINAÇÃO"),
         normalizar_texto("MARGEM INTERMEDIAÇÃO"),
         normalizar_texto("MG INTERMEDIAÇÃO LIQ"),
@@ -1287,13 +1299,41 @@ with tab_pnl_mensal:
             & (df_pnl["Métrica"] == "Realizado")
         ].copy()
 
-        fig_prod = px.bar(
-            base_produtos,
-            x="Produto",
-            y="Valor",
-            text_auto=".2s",
-            labels={"Valor": "Realizado", "Produto": ""},
+        base_produtos = base_produtos.sort_values("Produto")
+        x_produtos = base_produtos["Produto"].tolist()
+        y_final = base_produtos["Valor"].tolist()
+        texto_final = [formatar_moeda(v).replace("R$ ", "") for v in y_final]
+
+        steps_animacao = 18
+        frames = []
+        for step in range(1, steps_animacao + 1):
+            fator = step / steps_animacao
+            frames.append(
+                go.Frame(
+                    data=[
+                        go.Bar(
+                            x=x_produtos,
+                            y=[v * fator for v in y_final],
+                            text=texto_final if step == steps_animacao else [""] * len(y_final),
+                            textposition="inside",
+                        )
+                    ],
+                    name=str(step),
+                )
+            )
+
+        fig_prod = go.Figure(
+            data=[
+                go.Bar(
+                    x=x_produtos,
+                    y=[0 for _ in y_final],
+                    text=[""] * len(y_final),
+                    textposition="inside",
+                )
+            ],
+            frames=frames,
         )
+
         fig_prod.update_layout(
             template="plotly_dark",
             paper_bgcolor="#080f1f",
@@ -1301,9 +1341,39 @@ with tab_pnl_mensal:
             height=390,
             margin=dict(l=10, r=10, t=10, b=10),
             showlegend=False,
+            yaxis_title="Realizado",
+            xaxis_title="",
+            updatemenus=[
+                {
+                    "type": "buttons",
+                    "showactive": False,
+                    "x": 0.02,
+                    "y": 1.12,
+                    "buttons": [
+                        {
+                            "label": "Animar",
+                            "method": "animate",
+                            "args": [
+                                None,
+                                {
+                                    "frame": {"duration": 45, "redraw": True},
+                                    "fromcurrent": True,
+                                    "transition": {"duration": 20},
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
         )
         fig_prod.update_xaxes(showgrid=False, zeroline=False)
-        fig_prod.update_yaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+        fig_prod.update_yaxes(
+            showgrid=False,
+            zeroline=False,
+            tickprefix="R$ ",
+            separatethousands=True,
+            range=[0, max(y_final) * 1.18 if y_final else 1],
+        )
         st.plotly_chart(fig_prod, use_container_width=True)
 
         st.markdown('<div class="section-title">Resumo das linhas principais por produto</div>', unsafe_allow_html=True)
