@@ -82,9 +82,10 @@ CSS = """
     table.dash-table thead th {
         background: #111a2e;
         color: #ffffff;
-        font-weight: 800;
+        font-weight: 850;
+        font-size: 1.05rem;
         text-align: center;
-        padding: 13px 14px;
+        padding: 15px 14px;
         border-right: 1px solid rgba(255,255,255,.52);
         border-bottom: 1px solid rgba(255,255,255,.70);
         white-space: nowrap;
@@ -117,6 +118,15 @@ CSS = """
     }
     table.dash-table tbody tr:hover td {
         background: #111a2e;
+    }
+    table.dash-table tbody tr.total-row td {
+        font-size: 1.04rem;
+        font-weight: 900;
+        background: #111a2e;
+        color: #ffffff;
+    }
+    table.dash-table tbody tr.total-row td:first-child {
+        text-align: center;
     }
 </style>
 """
@@ -168,7 +178,8 @@ def tabela_html(df):
         html.append(f"<th>{col}</th>")
     html.append("</tr></thead><tbody>")
     for _, row in df.iterrows():
-        html.append("<tr>")
+        classe_linha = ' class="total-row"' if str(row.iloc[0]).strip().lower() == "resultado total" else ""
+        html.append(f"<tr{classe_linha}>")
         for col in df.columns:
             html.append(f"<td>{row[col]}</td>")
         html.append("</tr>")
