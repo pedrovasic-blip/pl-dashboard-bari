@@ -69,10 +69,8 @@ def formatar_moeda(valor):
         valor = float(valor)
     except Exception:
         valor = 0.0
-
     sinal = "-" if valor < 0 else ""
     valor_abs = abs(valor)
-
     if valor_abs >= 1_000_000_000:
         texto = f"{sinal}R$ {valor_abs / 1_000_000_000:,.2f} bi"
     elif valor_abs >= 1_000_000:
@@ -81,7 +79,6 @@ def formatar_moeda(valor):
         texto = f"{sinal}R$ {valor_abs / 1_000:,.1f} mil"
     else:
         texto = f"{sinal}R$ {valor_abs:,.2f}"
-
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -129,7 +126,6 @@ def converter_periodo(valor):
 
     texto_sem_acento = normalizar_texto(texto)
     partes = texto_sem_acento.split()
-
     mes = None
     ano = None
 
@@ -174,21 +170,24 @@ def card(titulo, valor, ajuda):
 
 @st.cache_data(show_spinner=False)
 def carregar_resultado(arquivo):
+    # Mantém os índices reais das colunas. Isso é importante porque a aba RESULTADO tem colunas ocultas/vazias.
     bruto = pd.read_excel(arquivo, sheet_name=ABA_RESULTADO, header=None, engine="openpyxl")
-    bruto = bruto.dropna(how="all").dropna(axis=1, how="all")
+    bruto = bruto.dropna(how="all")
 
     linha_mes = None
     col_rotulo = None
 
     for idx in bruto.index:
-        valores_norm = [normalizar_texto(v) for v in bruto.loc[idx].tolist()]
-        if "mes" in valores_norm:
-            linha_mes = idx
-            col_rotulo = valores_norm.index("mes")
+        for col in bruto.columns:
+            if normalizar_texto(bruto.loc[idx, col]) == "mes":
+                linha_mes = idx
+                col_rotulo = col
+                break
+        if linha_mes is not None:
             break
 
-    if linha_mes is None:
-        raise ValueError("Não encontrei a linha de cabeçalho 'Mês' na aba RESULTADO.")
+    if linha_mes is None or col_rotulo is None:
+        raise ValueError("Não encontrei a célula com 'Mês' na aba RESULTADO.")
 
     colunas_periodo = []
     for col in bruto.columns:
@@ -199,48 +198,45 @@ def carregar_resultado(arquivo):
             colunas_periodo.append((col, periodo))
 
     if not colunas_periodo:
-        raise ValueError("Não encontrei os meses na aba RESULTADO.")
+        raise ValueError("Encontrei a célula 'Mês', mas não encontrei meses válidos na mesma linha.")
 
-    linhas = []
+    registros = []
+    ordem_linha = 0
+
     for idx in bruto.index:
         if idx <= linha_mes:
             continue
 
-        linha_nome = bruto.loc[idx, col_rotulo] if col_rotulo in bruto.columns else None
+        linha_nome = bruto.loc[idx, col_rotulo]
         if pd.isna(linha_nome) or str(linha_nome).strip() == "":
             continue
 
-        tem_valor = False
+        linha_tem_valor = False
         for col, periodo in colunas_periodo:
             valor = pd.to_numeric(bruto.loc[idx, col], errors="coerce")
             if pd.notna(valor):
-                tem_valor = True
-                linhas.append(
+                linha_tem_valor = True
+                registros.append(
                     {
                         "Linha": str(linha_nome).strip(),
                         "Linha_Normalizada": normalizar_texto(linha_nome),
                         "Data": periodo,
                         "Período": nome_periodo(periodo),
                         "Valor": float(valor),
-                        "Ordem": len(linhas),
+                        "Ordem_Linha": ordem_linha,
                     }
                 )
 
-        if not tem_valor:
-            continue
+        if linha_tem_valor:
+            ordem_linha += 1
 
-    df = pd.DataFrame(linhas)
+    df = pd.DataFrame(registros)
+
     if df.empty:
-        raise ValueError("A aba RESULTADO foi encontrada, mas não consegui transformar os resultados em tabela.")
-
-    ordem_linhas = (
-        df.groupby("Linha", as_index=False)["Ordem"]
-        .min()
-        .sort_values("Ordem")
-        .reset_index(drop=True)
-    )
-    mapa_ordem = {linha: i for i, linha in enumerate(ordem_linhas["Linha"])}
-    df["Ordem_Linha"] = df["Linha"].map(mapa_ordem)
+        raise ValueError(
+            "A aba RESULTADO foi encontrada, mas nenhum valor numérico foi lido. "
+            "Verifique se os meses estão na mesma linha do cabeçalho 'Mês'."
+        )
 
     return df
 
@@ -258,7 +254,7 @@ def carregar_base_dash(arquivo):
 
 
 def achar_linha(df, termos):
-    linhas = df[["Linha", "Linha_Normalizada"]].drop_duplicates()
+    linhas = df[["Linha", "Linha_Normalizada", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
     for termo in termos:
         termo_norm = normalizar_texto(termo)
         encontrado = linhas[linhas["Linha_Normalizada"].str.contains(termo_norm, regex=False, na=False)]
@@ -274,7 +270,6 @@ def montar_resultados_principais(df):
         ("Resultado Conglomerado + Coligadas", ["resultado congl coligadas", "resultado conglomerado coligadas"]),
         ("Resultado Total", ["res total", "resultado total"]),
     ]
-
     mapeamento = []
     for titulo, termos in specs:
         linha = achar_linha(df, termos)
@@ -431,4 +426,4 @@ with tab_base:
         """.replace(",", "."),
         unsafe_allow_html=True,
     )
-    st.dataframe(df_resultado.drop(columns=["Linha_Normalizada", "Ordem"], errors="ignore"), use_container_width=True, hide_index=True)
+    st.dataframe(df_resultado.drop(columns=["Linha_Normalizada"], errors="ignore"), use_container_width=True, hide_index=True)
