@@ -39,6 +39,15 @@ CSS = """
     .kpi-label { color: #9fb2df; font-size: .78rem; margin-bottom: 10px; }
     .kpi-value { color: #ffffff; font-size: 1.65rem; font-weight: 850; line-height: 1.15; }
     .kpi-help { color: #60759f; font-size: .72rem; margin-top: 9px; }
+    .kpi-delta {
+        font-size: .88rem;
+        font-weight: 800;
+        margin-top: 9px;
+        line-height: 1.15;
+    }
+    .delta-positive { color: #22c55e; }
+    .delta-negative { color: #ef4444; }
+    .delta-neutral { color: #9fb2df; }
     .note-box {
         background: #111a2e;
         border: 1px solid #243150;
@@ -76,7 +85,7 @@ CSS = """
         white-space: nowrap;
     }
     table.dash-table thead th:first-child {
-        text-align: left;
+        text-align: center;
         min-width: 260px;
     }
     table.dash-table tbody td {
@@ -225,12 +234,40 @@ def nome_periodo(data):
     return f"{meses[data.month - 1]}/{data.year}"
 
 
-def card(titulo, valor, ajuda):
+def formatar_variacao(valor):
+    try:
+        valor = float(valor)
+    except Exception:
+        valor = 0.0
+
+    sinal = "+" if valor > 0 else ""
+    return f"{sinal}{formatar_moeda(valor)} vs mês anterior"
+
+
+def classe_variacao(valor):
+    try:
+        valor = float(valor)
+    except Exception:
+        valor = 0.0
+
+    if valor > 0:
+        return "delta-positive"
+    if valor < 0:
+        return "delta-negative"
+    return "delta-neutral"
+
+
+def card(titulo, valor, ajuda, variacao=None):
+    delta_html = ""
+    if variacao is not None:
+        delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
+
     st.markdown(
         f"""
         <div class="kpi-card">
             <div class="kpi-label">{titulo}</div>
             <div class="kpi-value">{formatar_moeda(valor)}</div>
+            {delta_html}
             <div class="kpi-help">{ajuda}</div>
         </div>
         """,
@@ -359,6 +396,38 @@ def montar_resultados_principais(df):
     return df.merge(mapa, on="Linha", how="inner")
 
 
+
+def periodo_anterior(periodos_df, periodo_atual):
+    linha_atual = periodos_df[periodos_df["Período"] == periodo_atual]
+    if linha_atual.empty:
+        return None
+
+    data_atual = linha_atual["Data"].iloc[0]
+    anteriores = periodos_df[periodos_df["Data"] < data_atual].sort_values("Data")
+
+    if anteriores.empty:
+        return None
+
+    return anteriores.iloc[-1]["Período"]
+
+
+def variacao_mes_anterior(df_principais, indicador, periodo_atual, periodo_ant):
+    if periodo_ant is None:
+        return None
+
+    valor_atual = df_principais[
+        (df_principais["Indicador"] == indicador)
+        & (df_principais["Período"] == periodo_atual)
+    ]["Valor"].sum()
+
+    valor_ant = df_principais[
+        (df_principais["Indicador"] == indicador)
+        & (df_principais["Período"] == periodo_ant)
+    ]["Valor"].sum()
+
+    return valor_atual - valor_ant
+
+
 def montar_tabela_empresas_e_total(df):
     excluir_exatos = {
         "resultado congl financeiro",
@@ -456,6 +525,7 @@ tab_resultados, tab_pnl_mensal, tab_pnl_acum, tab_base = st.tabs(
 with tab_resultados:
     df_principais = montar_resultados_principais(df_resultado)
     df_cards = df_principais[df_principais["Período"] == periodo_sel].copy()
+    periodo_ant = periodo_anterior(periodos_disponiveis, periodo_sel)
 
     st.markdown('<div class="section-title">Principais resultados</div>', unsafe_allow_html=True)
 
@@ -472,7 +542,8 @@ with tab_resultados:
             linha = df_cards[df_cards["Indicador"] == indicador]
             valor = linha["Valor"].sum() if not linha.empty else 0
             origem = linha["Linha"].iloc[0] if not linha.empty else "Linha não encontrada"
-            card(indicador, valor, f"{periodo_sel} • {origem}")
+            variacao = variacao_mes_anterior(df_principais, indicador, periodo_sel, periodo_ant)
+            card(indicador, valor, f"{periodo_sel} • {origem}", variacao=variacao)
 
     st.markdown('<div class="section-title">Evolução histórica dos resultados</div>', unsafe_allow_html=True)
 
@@ -509,6 +580,8 @@ with tab_resultados:
     for col in tabela_formatada.columns:
         if col != "Linha":
             tabela_formatada[col] = tabela_formatada[col].map(formatar_numero)
+
+    tabela_formatada = tabela_formatada.rename(columns={"Linha": "Empresa"})
 
     st.markdown(tabela_html(tabela_formatada), unsafe_allow_html=True)
 
