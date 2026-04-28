@@ -128,6 +128,22 @@ CSS = """
     table.dash-table tbody tr.total-row td:first-child {
         text-align: center;
     }
+    table.dash-table td.neg-value {
+        color: #ef4444;
+        font-weight: 900;
+    }
+    table.dash-table td.delta-positive {
+        color: #22c55e;
+        font-weight: 900;
+    }
+    table.dash-table td.delta-negative {
+        color: #ef4444;
+        font-weight: 900;
+    }
+    table.dash-table td.delta-neutral {
+        color: #9fb2df;
+        font-weight: 850;
+    }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -171,18 +187,52 @@ def formatar_numero(valor):
     return f"{valor:,.0f}".replace(",", ".")
 
 
-def tabela_html(df):
+def formatar_percentual(valor):
+    if pd.isna(valor):
+        return ""
+    try:
+        valor = float(valor)
+    except Exception:
+        return str(valor)
+
+    sinal = "+" if valor > 0 else ""
+    texto = f"{sinal}{valor * 100:,.1f}%"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def tabela_html(df, df_valores=None, coluna_delta="Δ mês anterior"):
     html = ['<div class="table-wrap"><table class="dash-table">']
     html.append("<thead><tr>")
     for col in df.columns:
         html.append(f"<th>{col}</th>")
     html.append("</tr></thead><tbody>")
-    for _, row in df.iterrows():
+
+    for idx, row in df.iterrows():
         classe_linha = ' class="total-row"' if str(row.iloc[0]).strip().lower() == "resultado total" else ""
         html.append(f"<tr{classe_linha}>")
+
         for col in df.columns:
-            html.append(f"<td>{row[col]}</td>")
+            classes = []
+
+            if col == coluna_delta and df_valores is not None:
+                valor_delta = df_valores.loc[idx, col]
+                if pd.notna(valor_delta):
+                    if valor_delta > 0:
+                        classes.append("delta-positive")
+                    elif valor_delta < 0:
+                        classes.append("delta-negative")
+                    else:
+                        classes.append("delta-neutral")
+            elif col != "Empresa" and df_valores is not None and col in df_valores.columns:
+                valor = df_valores.loc[idx, col]
+                if pd.notna(valor) and valor < 0:
+                    classes.append("neg-value")
+
+            classe_td = f' class="{" ".join(classes)}"' if classes else ""
+            html.append(f"<td{classe_td}>{row[col]}</td>")
+
         html.append("</tr>")
+
     html.append("</tbody></table></div>")
     return "".join(html)
 
@@ -450,6 +500,25 @@ def variacao_mes_anterior(df_principais, indicador, periodo_atual, periodo_ant):
     return (valor_atual - valor_ant) / abs(valor_ant)
 
 
+def adicionar_coluna_variacao_tabela(tabela, periodos_df, periodo_atual):
+    coluna_delta = "Δ mês anterior"
+    tabela = tabela.copy()
+
+    periodo_ant = periodo_anterior(periodos_df, periodo_atual)
+
+    if periodo_ant is None or periodo_ant not in tabela.columns or periodo_atual not in tabela.columns:
+        tabela[coluna_delta] = pd.NA
+        return tabela, coluna_delta
+
+    atual = pd.to_numeric(tabela[periodo_atual], errors="coerce")
+    anterior = pd.to_numeric(tabela[periodo_ant], errors="coerce")
+
+    tabela[coluna_delta] = (atual - anterior) / anterior.abs()
+    tabela.loc[anterior.eq(0) | anterior.isna(), coluna_delta] = pd.NA
+
+    return tabela, coluna_delta
+
+
 def montar_tabela_empresas_e_total(df):
     excluir_exatos = {
         "banco",
@@ -632,15 +701,21 @@ with tab_resultados:
     st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
     tabela = montar_tabela_empresas_e_total(df_resultado)
+    tabela, coluna_delta = adicionar_coluna_variacao_tabela(tabela, periodos_disponiveis, periodo_sel)
+
+    tabela_valores = tabela.copy()
     tabela_formatada = tabela.copy()
 
     for col in tabela_formatada.columns:
-        if col != "Linha":
+        if col == coluna_delta:
+            tabela_formatada[col] = tabela_formatada[col].map(formatar_percentual)
+        elif col != "Linha":
             tabela_formatada[col] = tabela_formatada[col].map(formatar_numero)
 
     tabela_formatada = tabela_formatada.rename(columns={"Linha": "Empresa"})
+    tabela_valores = tabela_valores.rename(columns={"Linha": "Empresa"})
 
-    st.markdown(tabela_html(tabela_formatada), unsafe_allow_html=True)
+    st.markdown(tabela_html(tabela_formatada, tabela_valores, coluna_delta=coluna_delta), unsafe_allow_html=True)
 
 with tab_pnl_mensal:
     try:
