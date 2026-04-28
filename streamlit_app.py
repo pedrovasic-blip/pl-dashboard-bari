@@ -560,16 +560,37 @@ def obter_periodos_pnl_mensal_anualizado(arquivo):
         bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal", header=None, engine="openpyxl")
 
     periodos = []
+    chaves_vistas = set()
 
-    for _, row in bruto.iterrows():
-        valores = row.tolist()
-        for valor in valores:
-            data = converter_periodo(valor)
-            if data is not None and pd.Timestamp(data).year >= 2020:
+    # Procura somente as datas que estão ao lado do marcador "Data Base ->".
+    # Isso evita que números da própria tabela sejam interpretados como datas.
+    for idx in bruto.index:
+        for col in bruto.columns:
+            if normalizar_texto(bruto.loc[idx, col]) != "data base":
+                continue
+
+            for c_data in range(col + 1, min(col + 12, max(bruto.columns) + 1)):
+                if c_data not in bruto.columns:
+                    continue
+
+                valor = bruto.loc[idx, c_data]
+                data = converter_periodo(valor)
+
+                if data is None:
+                    continue
+
                 data_ts = pd.Timestamp(data)
-                item = {"Período": nome_periodo(data_ts), "Data": data_ts}
-                if item not in periodos:
-                    periodos.append(item)
+
+                # Mantém apenas anos plausíveis da base.
+                if data_ts.year < 2020 or data_ts.year > 2035:
+                    continue
+
+                chave = data_ts.strftime("%Y-%m")
+                if chave not in chaves_vistas:
+                    periodos.append({"Período": nome_periodo(data_ts), "Data": data_ts})
+                    chaves_vistas.add(chave)
+
+                break
 
     periodos = sorted(periodos, key=lambda x: x["Data"])
 
