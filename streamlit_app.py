@@ -49,7 +49,61 @@ CSS = """
     .stTabs [data-baseweb="tab-list"] { gap: 10px; border-bottom: 1px solid #243150; }
     .stTabs [data-baseweb="tab"] { color: #9fb2df; background: transparent; }
     .stTabs [aria-selected="true"] { color: #ffffff; border-bottom: 2px solid #24a8ff; }
-    div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+
+    .table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        border: 1px solid rgba(255,255,255,.58);
+        border-radius: 14px;
+        background: #080f1f;
+        box-shadow: 0 10px 26px rgba(0,0,0,.20);
+    }
+    table.dash-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #080f1f;
+        color: #e5ecff;
+        font-size: .92rem;
+    }
+    table.dash-table thead th {
+        background: #111a2e;
+        color: #ffffff;
+        font-weight: 800;
+        text-align: center;
+        padding: 13px 14px;
+        border-right: 1px solid rgba(255,255,255,.52);
+        border-bottom: 1px solid rgba(255,255,255,.70);
+        white-space: nowrap;
+    }
+    table.dash-table thead th:first-child {
+        text-align: left;
+        min-width: 260px;
+    }
+    table.dash-table tbody td {
+        background: #080f1f;
+        color: #e5ecff;
+        text-align: center;
+        vertical-align: middle;
+        padding: 12px 14px;
+        border-right: 1px solid rgba(255,255,255,.42);
+        border-bottom: 1px solid rgba(255,255,255,.32);
+        white-space: nowrap;
+    }
+    table.dash-table tbody td:first-child {
+        color: #ffffff;
+        font-weight: 800;
+        text-align: left;
+    }
+    table.dash-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+    table.dash-table th:last-child,
+    table.dash-table td:last-child {
+        border-right: none;
+    }
+    table.dash-table tbody tr:hover td {
+        background: #111a2e;
+    }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -91,6 +145,21 @@ def formatar_numero(valor):
     except Exception:
         return str(valor)
     return f"{valor:,.0f}".replace(",", ".")
+
+
+def tabela_html(df):
+    html = ['<div class="table-wrap"><table class="dash-table">']
+    html.append("<thead><tr>")
+    for col in df.columns:
+        html.append(f"<th>{col}</th>")
+    html.append("</tr></thead><tbody>")
+    for _, row in df.iterrows():
+        html.append("<tr>")
+        for col in df.columns:
+            html.append(f"<td>{row[col]}</td>")
+        html.append("</tr>")
+    html.append("</tbody></table></div>")
+    return "".join(html)
 
 
 def converter_periodo(valor):
@@ -291,18 +360,11 @@ def montar_resultados_principais(df):
 
 
 def montar_tabela_empresas_e_total(df):
-    """
-    Pedido: retirar os resultados intermediários de conglomerado/coligadas e manter:
-    - linhas de empresas/aberturas;
-    - Resultado Total.
-    Exclui linhas que são totais intermediários ou subtotais de grupos.
-    """
     excluir_exatos = {
         "resultado congl financeiro",
         "resultado conglomerado financeiro",
         "resultado coligadas",
         "resultado congl coligadas",
-        "resultado conglomerado coligadas",
         "resultado conglomerado coligadas",
     }
 
@@ -448,7 +510,7 @@ with tab_resultados:
         if col != "Linha":
             tabela_formatada[col] = tabela_formatada[col].map(formatar_numero)
 
-    st.dataframe(tabela_formatada, use_container_width=True, hide_index=True)
+    st.markdown(tabela_html(tabela_formatada), unsafe_allow_html=True)
 
 with tab_pnl_mensal:
     try:
