@@ -70,11 +70,12 @@ CSS = """
         border-right: 1px solid rgba(255,255,255,.38);
         border-bottom: 1px solid rgba(255,255,255,.28);
         white-space: nowrap;
+        font-weight: 400;
     }
     table.pnl-matrix tbody td:first-child {
         text-align: left;
         color: #ffffff;
-        font-weight: 820;
+        font-weight: 400;
         min-width: 250px;
     }
     table.pnl-matrix tbody tr.main-line td {
@@ -94,11 +95,11 @@ CSS = """
     }
     table.pnl-matrix td.delta-positive {
         color: #22c55e;
-        font-weight: 900;
+        font-weight: 800;
     }
     table.pnl-matrix td.delta-negative {
         color: #ef4444;
-        font-weight: 900;
+        font-weight: 800;
     }
     table.pnl-matrix th.product-header {
         background: #101a2d;
@@ -756,9 +757,25 @@ def montar_matriz_pnl_excel(df_pnl, linhas_principais):
 
     for linha in linhas_principais:
         row = {"Linha": linha}
+
         for produto in produtos:
-            for metrica in metricas_por_produto[produto]:
-                row[(produto, metrica)] = valor_pnl(df_pnl, produto, linha, metrica)
+            realizado = valor_pnl(df_pnl, produto, linha, "Realizado")
+            orcado = valor_pnl(df_pnl, produto, linha, "Orçado")
+
+            delta_rs = realizado - orcado
+            delta_pct = pd.NA if orcado == 0 else delta_rs / abs(orcado)
+
+            row[(produto, "Realizado")] = realizado
+            row[(produto, "Orçado")] = orcado
+            row[(produto, "Δ %")] = delta_pct
+
+            # Regra de cor solicitada:
+            # Realizado maior que Orçado -> vermelho; caso contrário -> verde.
+            row[(produto, "_delta_bad")] = realizado > orcado
+
+            if produto == "Total":
+                row[(produto, "Δ R$")] = delta_rs
+
         linhas.append(row)
 
     return pd.DataFrame(linhas), produtos, metricas_por_produto
@@ -814,16 +831,11 @@ def tabela_html_pnl_matriz(df_matrix, produtos, metricas_por_produto):
                 if metrica == "Δ %":
                     texto = formatar_percentual(valor)
                     if pd.notna(valor):
-                        if valor > 0:
-                            classes.append("delta-positive")
-                        elif valor < 0:
-                            classes.append("delta-negative")
+                        classes.append("delta-negative" if row[(produto, "_delta_bad")] else "delta-positive")
                 elif metrica == "Δ R$":
                     texto = formatar_numero(valor)
-                    if pd.notna(valor) and valor < 0:
-                        classes.append("neg-value")
-                    elif pd.notna(valor) and valor > 0:
-                        classes.append("delta-positive")
+                    if pd.notna(valor):
+                        classes.append("delta-negative" if row[(produto, "_delta_bad")] else "delta-positive")
                 else:
                     texto = formatar_numero(valor)
                     if pd.notna(valor) and valor < 0:
@@ -1263,72 +1275,36 @@ with tab_pnl_mensal:
         fig_comp.update_yaxes(showgrid=False, zeroline=False)
         st.plotly_chart(fig_comp, use_container_width=True)
 
-        col_chart_1, col_chart_2 = st.columns(2)
+        st.markdown('<div class="section-title">Resultado Contábil por produto</div>', unsafe_allow_html=True)
+        linha_resultado_contabil = next(
+            (linha for linha in linhas_principais if normalizar_texto(linha) in ["resultado contabil", "resultado contábil"]),
+            linhas_principais[-1] if linhas_principais else None,
+        )
 
-        with col_chart_1:
-            st.markdown('<div class="section-title">Variação % vs Orçado</div>', unsafe_allow_html=True)
-            base_var = df_pnl[
-                (df_pnl["Produto"] == produto_sel_pnl)
-                & (df_pnl["Linha"].isin(linhas_principais))
-                & (df_pnl["Métrica"] == "Δ %")
-            ].copy()
-            base_var["Ordem"] = base_var["Linha"].map(ordem_linhas)
-            base_var = base_var.sort_values("Ordem", ascending=True)
-            base_var["Cor"] = base_var["Valor"].apply(lambda x: "Positiva" if x >= 0 else "Negativa")
-            base_var["Label"] = base_var["Valor"].map(formatar_percentual)
+        base_produtos = df_pnl[
+            (df_pnl["Linha"] == linha_resultado_contabil)
+            & (df_pnl["Produto"].isin(["Consignado", "Imobiliário", "Total"]))
+            & (df_pnl["Métrica"] == "Realizado")
+        ].copy()
 
-            fig_var = px.bar(
-                base_var,
-                x="Linha",
-                y="Valor",
-                color="Cor",
-                text="Label",
-                labels={"Valor": "Δ %", "Linha": ""},
-            )
-            fig_var.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="#080f1f",
-                plot_bgcolor="#080f1f",
-                height=390,
-                margin=dict(l=10, r=10, t=10, b=10),
-                showlegend=False,
-            )
-            fig_var.update_traces(textposition="outside", cliponaxis=False)
-            fig_var.update_xaxes(showgrid=False, zeroline=False, tickangle=-35)
-            fig_var.update_yaxes(showgrid=False, zeroline=True, tickformat=".1%")
-            st.plotly_chart(fig_var, use_container_width=True)
-
-        with col_chart_2:
-            st.markdown('<div class="section-title">Resultado Contábil por produto</div>', unsafe_allow_html=True)
-            linha_resultado_contabil = next(
-                (linha for linha in linhas_principais if normalizar_texto(linha) in ["resultado contabil", "resultado contábil"]),
-                linhas_principais[-1] if linhas_principais else None,
-            )
-
-            base_produtos = df_pnl[
-                (df_pnl["Linha"] == linha_resultado_contabil)
-                & (df_pnl["Produto"].isin(["Consignado", "Imobiliário", "Total"]))
-                & (df_pnl["Métrica"] == "Realizado")
-            ].copy()
-
-            fig_prod = px.bar(
-                base_produtos,
-                x="Produto",
-                y="Valor",
-                text_auto=".2s",
-                labels={"Valor": "Realizado", "Produto": ""},
-            )
-            fig_prod.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="#080f1f",
-                plot_bgcolor="#080f1f",
-                height=390,
-                margin=dict(l=10, r=10, t=10, b=10),
-                showlegend=False,
-            )
-            fig_prod.update_xaxes(showgrid=False, zeroline=False)
-            fig_prod.update_yaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
-            st.plotly_chart(fig_prod, use_container_width=True)
+        fig_prod = px.bar(
+            base_produtos,
+            x="Produto",
+            y="Valor",
+            text_auto=".2s",
+            labels={"Valor": "Realizado", "Produto": ""},
+        )
+        fig_prod.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#080f1f",
+            plot_bgcolor="#080f1f",
+            height=390,
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=False,
+        )
+        fig_prod.update_xaxes(showgrid=False, zeroline=False)
+        fig_prod.update_yaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+        st.plotly_chart(fig_prod, use_container_width=True)
 
         st.markdown('<div class="section-title">Resumo das linhas principais por produto</div>', unsafe_allow_html=True)
         matriz_pnl, produtos_matriz, metricas_matriz = montar_matriz_pnl_excel(df_pnl, linhas_principais)
