@@ -246,7 +246,8 @@ def formatar_variacao(valor):
         valor = 0.0
 
     sinal = "+" if valor > 0 else ""
-    return f"{sinal}{formatar_moeda(valor)} vs mês anterior"
+    texto = f"{sinal}{valor * 100:,.1f}%"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def classe_variacao(valor):
@@ -432,11 +433,19 @@ def variacao_mes_anterior(df_principais, indicador, periodo_atual, periodo_ant):
         & (df_principais["Período"] == periodo_ant)
     ]["Valor"].sum()
 
-    return valor_atual - valor_ant
+    if valor_ant == 0:
+        return None
+
+    return (valor_atual - valor_ant) / abs(valor_ant)
 
 
 def montar_tabela_empresas_e_total(df):
     excluir_exatos = {
+        "banco",
+        "equiv patr",
+        "jcp dividendos",
+        "br cards",
+        "resultado mep",
         "resultado congl financeiro",
         "resultado conglomerado financeiro",
         "resultado coligadas",
@@ -451,6 +460,14 @@ def montar_tabela_empresas_e_total(df):
         "resultado congl coligadas",
         "resultado conglomerado coligadas",
     ]
+
+    renomear = {
+        "resultado banco": "Banco",
+        "resulta br cards": "BR Cards",
+        "resultado br cards": "BR Cards",
+        "res total": "Resultado Total",
+        "resultado total": "Resultado Total",
+    }
 
     linha_total = achar_linha_exata_ou_contendo(df, ["res total", "resultado total"])
 
@@ -478,6 +495,12 @@ def montar_tabela_empresas_e_total(df):
         .reindex(columns=colunas)
         .reset_index()
     )
+
+    def nome_exibicao(linha):
+        nome_norm = normalizar_texto(linha)
+        return renomear.get(nome_norm, linha)
+
+    tabela["Linha"] = tabela["Linha"].map(nome_exibicao)
     return tabela
 
 
@@ -567,6 +590,7 @@ with tab_resultados:
             y="Valor",
             color="Indicador",
             markers=True,
+            line_shape="spline",
             labels={"Data": "Mês", "Valor": "Resultado", "Indicador": "Resultado"},
         )
         tick_datas = periodos_disponiveis["Data"].tolist()
@@ -579,8 +603,19 @@ with tab_resultados:
             margin=dict(l=10, r=10, t=10, b=10),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         )
-        fig.update_xaxes(tickmode="array", tickvals=tick_datas, ticktext=tick_textos)
-        fig.update_yaxes(tickprefix="R$ ", separatethousands=True)
+        fig.update_xaxes(
+            tickmode="array",
+            tickvals=tick_datas,
+            ticktext=tick_textos,
+            showgrid=False,
+            zeroline=False,
+        )
+        fig.update_yaxes(
+            tickprefix="R$ ",
+            separatethousands=True,
+            showgrid=False,
+            zeroline=False,
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
