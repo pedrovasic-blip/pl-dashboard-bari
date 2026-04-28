@@ -339,7 +339,7 @@ def formatar_percentual(valor):
         return str(valor)
 
     sinal = "+" if valor > 0 else ""
-    texto = f"{sinal}{valor * 100:,.1f}%"
+    texto = f"Δ {sinal}{valor * 100:,.1f}%"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -450,7 +450,7 @@ def formatar_variacao(valor):
         valor = 0.0
 
     sinal = "+" if valor > 0 else ""
-    texto = f"{sinal}{valor * 100:,.1f}%"
+    texto = f"Δ {sinal}{valor * 100:,.1f}%"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -1051,7 +1051,7 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
         base_produtos,
         x="Produto",
         y="Valor",
-        text=base_produtos["Valor"].map(lambda v: formatar_moeda(v).replace("R$ ", "")),
+        text=base_produtos["Valor"].map(lambda v: formatar_moeda(v)),
         labels={"Valor": "Realizado", "Produto": ""},
     )
     fig_prod.update_traces(
@@ -1583,30 +1583,40 @@ with tab_resultados:
                 trace.update(
                     mode="lines+markers+text",
                     textposition=posicoes_rotulo.get(trace.name, "top center"),
-                    textfont=dict(size=11),
+                    textfont=dict(size=14, family="Arial Black"),
                     cliponaxis=False,
                 )
 
             tick_datas = periodos_disponiveis["Data"].tolist()
             tick_textos = periodos_disponiveis["Período"].tolist()
+
+            y_min = base_linhas["Valor"].min()
+            y_max = base_linhas["Valor"].max()
+            y_pad = max((y_max - y_min) * 0.18, 1)
+
+            x_min = min(tick_datas) - pd.DateOffset(days=8)
+            x_max = max(tick_datas) + pd.DateOffset(days=16)
+
             fig.update_layout(
                 template="plotly_dark",
                 paper_bgcolor="#080f1f",
                 plot_bgcolor="#080f1f",
-                height=470,
-                margin=dict(l=10, r=30, t=20, b=10),
-                legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="left", x=0),
+                height=500,
+                margin=dict(l=10, r=95, t=35, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
             )
             fig.update_xaxes(
                 tickmode="array",
                 tickvals=tick_datas,
                 ticktext=tick_textos,
+                range=[x_min, x_max],
                 showgrid=False,
                 zeroline=False,
             )
             fig.update_yaxes(
                 tickprefix="R$ ",
                 separatethousands=True,
+                range=[y_min - y_pad, y_max + y_pad],
                 showgrid=False,
                 zeroline=False,
             )
