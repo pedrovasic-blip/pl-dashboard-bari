@@ -41,6 +41,74 @@ CSS = """
         justify-content: center;
         align-items: center;
     }
+    .card-row-spacer {
+        height: 14px;
+    }
+    table.pnl-matrix {
+        width: 100%;
+        border-collapse: collapse;
+        background: #080f1f;
+        color: #e5ecff;
+        font-size: .88rem;
+    }
+    table.pnl-matrix thead th {
+        background: #111a2e;
+        color: #ffffff;
+        font-weight: 850;
+        text-align: center;
+        padding: 11px 10px;
+        border-right: 1px solid rgba(255,255,255,.55);
+        border-bottom: 1px solid rgba(255,255,255,.72);
+        white-space: nowrap;
+    }
+    table.pnl-matrix tbody td {
+        background: #080f1f;
+        color: #e5ecff;
+        text-align: center;
+        vertical-align: middle;
+        padding: 10px 10px;
+        border-right: 1px solid rgba(255,255,255,.38);
+        border-bottom: 1px solid rgba(255,255,255,.28);
+        white-space: nowrap;
+    }
+    table.pnl-matrix tbody td:first-child {
+        text-align: left;
+        color: #ffffff;
+        font-weight: 820;
+        min-width: 250px;
+    }
+    table.pnl-matrix tbody tr.main-line td {
+        background: #162338;
+        color: #ffffff;
+        font-weight: 900;
+    }
+    table.pnl-matrix tbody tr.result-line td {
+        background: #1d2d48;
+        color: #ffffff;
+        font-weight: 950;
+        font-size: .95rem;
+    }
+    table.pnl-matrix td.neg-value {
+        color: #ef4444;
+        font-weight: 900;
+    }
+    table.pnl-matrix td.delta-positive {
+        color: #22c55e;
+        font-weight: 900;
+    }
+    table.pnl-matrix td.delta-negative {
+        color: #ef4444;
+        font-weight: 900;
+    }
+    table.pnl-matrix th.product-header {
+        background: #101a2d;
+        font-size: .95rem;
+        letter-spacing: .2px;
+    }
+    table.pnl-matrix th.metric-header {
+        background: #162338;
+        font-size: .84rem;
+    }
     .kpi-label { color: #9fb2df; font-size: .78rem; margin-bottom: 10px; }
     .kpi-value { color: #ffffff; font-size: 1.65rem; font-weight: 850; line-height: 1.15; }
     .kpi-help { color: #60759f; font-size: .72rem; margin-top: 9px; }
@@ -676,6 +744,100 @@ def tabela_html_pnl(df, df_valores=None):
     return "".join(html)
 
 
+def montar_matriz_pnl_excel(df_pnl, linhas_principais):
+    produtos = ["Consignado", "Imobiliário", "Total"]
+    metricas_por_produto = {
+        "Consignado": ["Realizado", "Orçado", "Δ %"],
+        "Imobiliário": ["Realizado", "Orçado", "Δ %"],
+        "Total": ["Realizado", "Orçado", "Δ %", "Δ R$"],
+    }
+
+    linhas = []
+
+    for linha in linhas_principais:
+        row = {"Linha": linha}
+        for produto in produtos:
+            for metrica in metricas_por_produto[produto]:
+                row[(produto, metrica)] = valor_pnl(df_pnl, produto, linha, metrica)
+        linhas.append(row)
+
+    return pd.DataFrame(linhas), produtos, metricas_por_produto
+
+
+def tabela_html_pnl_matriz(df_matrix, produtos, metricas_por_produto):
+    linhas_destaque = {
+        normalizar_texto("RECEITAS"),
+        normalizar_texto("DESPESAS DE ORIGINAÇÃO"),
+        normalizar_texto("MARGEM INTERMEDIAÇÃO"),
+        normalizar_texto("MG INTERMEDIAÇÃO LIQ"),
+        normalizar_texto("MG CONTRIBUIÇÃO DIRETA"),
+        normalizar_texto("RESULTADO ANTES IMPOSTO"),
+        normalizar_texto("RESULTADO CONTÁBIL"),
+    }
+
+    html = ['<div class="table-wrap"><table class="pnl-matrix">']
+
+    html.append("<thead>")
+    html.append("<tr>")
+    html.append('<th rowspan="2">Linha P&L</th>')
+    for produto in produtos:
+        html.append(f'<th class="product-header" colspan="{len(metricas_por_produto[produto])}">{produto.upper()}</th>')
+    html.append("</tr>")
+
+    html.append("<tr>")
+    for produto in produtos:
+        for metrica in metricas_por_produto[produto]:
+            html.append(f'<th class="metric-header">{metrica}</th>')
+    html.append("</tr>")
+    html.append("</thead><tbody>")
+
+    for _, row in df_matrix.iterrows():
+        linha = row["Linha"]
+        linha_norm = normalizar_texto(linha)
+
+        if linha_norm in ["resultado contabil", "resultado contábil"]:
+            classe = "result-line"
+        elif linha_norm in linhas_destaque:
+            classe = "main-line"
+        else:
+            classe = ""
+
+        tr_class = f' class="{classe}"' if classe else ""
+        html.append(f"<tr{tr_class}>")
+        html.append(f"<td>{linha}</td>")
+
+        for produto in produtos:
+            for metrica in metricas_por_produto[produto]:
+                valor = row[(produto, metrica)]
+                classes = []
+
+                if metrica == "Δ %":
+                    texto = formatar_percentual(valor)
+                    if pd.notna(valor):
+                        if valor > 0:
+                            classes.append("delta-positive")
+                        elif valor < 0:
+                            classes.append("delta-negative")
+                elif metrica == "Δ R$":
+                    texto = formatar_numero(valor)
+                    if pd.notna(valor) and valor < 0:
+                        classes.append("neg-value")
+                    elif pd.notna(valor) and valor > 0:
+                        classes.append("delta-positive")
+                else:
+                    texto = formatar_numero(valor)
+                    if pd.notna(valor) and valor < 0:
+                        classes.append("neg-value")
+
+                classe_td = f' class="{" ".join(classes)}"' if classes else ""
+                html.append(f"<td{classe_td}>{texto}</td>")
+
+        html.append("</tr>")
+
+    html.append("</tbody></table></div>")
+    return "".join(html)
+
+
 def achar_linha_exata_ou_contendo(df, termos):
     linhas = df[["Linha", "Linha_Normalizada", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
     for termo in termos:
@@ -1058,6 +1220,9 @@ with tab_pnl_mensal:
         st.markdown('<div class="section-title">Principais linhas do P&L Mensal</div>', unsafe_allow_html=True)
 
         for inicio in range(0, len(linhas_principais), 4):
+            if inicio > 0:
+                st.markdown('<div class="card-row-spacer"></div>', unsafe_allow_html=True)
+
             cols_cards = st.columns(4)
             for col_card, linha in zip(cols_cards, linhas_principais[inicio:inicio + 4]):
                 realizado = valor_pnl(df_pnl, produto_sel_pnl, linha, "Realizado")
@@ -1108,13 +1273,16 @@ with tab_pnl_mensal:
                 & (df_pnl["Métrica"] == "Δ %")
             ].copy()
             base_var["Ordem"] = base_var["Linha"].map(ordem_linhas)
-            base_var = base_var.sort_values("Ordem", ascending=False)
+            base_var = base_var.sort_values("Ordem", ascending=True)
+            base_var["Cor"] = base_var["Valor"].apply(lambda x: "Positiva" if x >= 0 else "Negativa")
+            base_var["Label"] = base_var["Valor"].map(formatar_percentual)
 
             fig_var = px.bar(
                 base_var,
-                x="Valor",
-                y="Linha",
-                orientation="h",
+                x="Linha",
+                y="Valor",
+                color="Cor",
+                text="Label",
                 labels={"Valor": "Δ %", "Linha": ""},
             )
             fig_var.update_layout(
@@ -1125,8 +1293,9 @@ with tab_pnl_mensal:
                 margin=dict(l=10, r=10, t=10, b=10),
                 showlegend=False,
             )
-            fig_var.update_xaxes(showgrid=False, zeroline=False, tickformat=".1%")
-            fig_var.update_yaxes(showgrid=False, zeroline=False)
+            fig_var.update_traces(textposition="outside", cliponaxis=False)
+            fig_var.update_xaxes(showgrid=False, zeroline=False, tickangle=-35)
+            fig_var.update_yaxes(showgrid=False, zeroline=True, tickformat=".1%")
             st.plotly_chart(fig_var, use_container_width=True)
 
         with col_chart_2:
@@ -1162,16 +1331,11 @@ with tab_pnl_mensal:
             st.plotly_chart(fig_prod, use_container_width=True)
 
         st.markdown('<div class="section-title">Resumo das linhas principais por produto</div>', unsafe_allow_html=True)
-        tabela_pnl = montar_tabela_pnl_principal(df_pnl, linhas_principais)
-        tabela_valores = tabela_pnl.copy()
-        tabela_fmt = tabela_pnl.copy()
-
-        for col in ["Realizado", "Orçado", "Δ R$"]:
-            tabela_fmt[col] = tabela_fmt[col].map(formatar_numero)
-
-        tabela_fmt["Δ %"] = tabela_fmt["Δ %"].map(formatar_percentual)
-
-        st.markdown(tabela_html_pnl(tabela_fmt, tabela_valores), unsafe_allow_html=True)
+        matriz_pnl, produtos_matriz, metricas_matriz = montar_matriz_pnl_excel(df_pnl, linhas_principais)
+        st.markdown(
+            tabela_html_pnl_matriz(matriz_pnl, produtos_matriz, metricas_matriz),
+            unsafe_allow_html=True,
+        )
 
     except Exception as erro:
         st.info(f"Não consegui carregar a aba P&L Mensal: {erro}")
