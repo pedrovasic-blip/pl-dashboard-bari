@@ -166,6 +166,68 @@ CSS = """
         margin-top: 12px;
         line-height: 1.25;
     }
+
+    .composition-card {
+        min-height: 230px;
+        align-items: stretch;
+        text-align: left;
+        padding: 18px 18px;
+    }
+    .composition-title {
+        color: #9fb2df;
+        font-size: .86rem;
+        font-weight: 700;
+        text-align: center;
+        margin-bottom: 12px;
+    }
+    .composition-row {
+        margin-bottom: 12px;
+    }
+    .composition-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 5px;
+        align-items: baseline;
+    }
+    .composition-name {
+        color: #ffffff;
+        font-size: .82rem;
+        font-weight: 700;
+    }
+    .composition-value {
+        color: #ffffff;
+        font-size: .82rem;
+        font-weight: 800;
+        text-align: right;
+    }
+    .composition-pct {
+        color: #9fb2df;
+        font-size: .74rem;
+        font-weight: 700;
+        min-width: 42px;
+        text-align: right;
+    }
+    .composition-bar-wrap {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: #0b1224;
+        border: 1px solid #243150;
+    }
+    .composition-bar-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #24a8ff 0%, #7cc4ff 100%);
+    }
+    .composition-help {
+        color: #60759f;
+        font-size: .76rem;
+        margin-top: 6px;
+        line-height: 1.3;
+        text-align: center;
+    }
     .kpi-delta {
         font-size: .88rem;
         font-weight: 800;
@@ -1391,6 +1453,102 @@ def card_resultado_total_acumulado(valor_acumulado, variacao, valor_acumulado_an
     )
 
 
+def composicao_resultado_total_acumulado(df_principais, periodo_atual):
+    linha_atual = df_principais[
+        (df_principais["Indicador"] == "Resultado Total")
+        & (df_principais["Período"] == periodo_atual)
+    ]
+
+    if linha_atual.empty:
+        return None, []
+
+    data_atual = linha_atual["Data"].iloc[0]
+    ano_atual = pd.Timestamp(data_atual).year
+    data_inicio = pd.Timestamp(ano_atual, 1, 1)
+
+    def acumulado(indicador):
+        base = df_principais[
+            (df_principais["Indicador"] == indicador)
+            & (df_principais["Data"] >= data_inicio)
+            & (df_principais["Data"] <= data_atual)
+        ]
+        return float(base["Valor"].sum()) if not base.empty else 0.0
+
+    total = acumulado("Resultado Total")
+    conglomerado = acumulado("Resultado Conglomerado Financeiro")
+    coligadas = acumulado("Resultado Coligadas")
+    cong_colig = acumulado("Resultado Conglomerado + Coligadas")
+    ajustes = total - cong_colig
+
+    componentes = [
+        ("Congl. Financeiro", conglomerado),
+        ("Coligadas", coligadas),
+    ]
+
+    if abs(ajustes) > 0.5:
+        componentes.append(("Ajustes / Outros", ajustes))
+
+    itens = []
+    base_pct = abs(total) if total not in (None, 0) else None
+    for nome, valor in componentes:
+        pct = (valor / base_pct) if base_pct else None
+        itens.append({"nome": nome, "valor": valor, "pct": pct})
+
+    return total, itens
+
+
+
+def card_composicao_resultado_total_acumulado(df_principais, periodo_atual):
+    total, itens = composicao_resultado_total_acumulado(df_principais, periodo_atual)
+
+    if total is None or not itens:
+        st.markdown(
+            """
+            <div class="side-card composition-card">
+                <div class="composition-title">Composição do Resultado Total acumulado</div>
+                <div class="composition-help">Não foi possível calcular a composição para o período selecionado.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    max_pct = max((abs(item["pct"]) for item in itens if item["pct"] is not None), default=0)
+    html_rows = []
+    for item in itens:
+        pct = item["pct"] if item["pct"] is not None else 0.0
+        pct_texto = f"{pct * 100:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+        largura = 0 if max_pct == 0 else max(6, abs(pct) / max_pct * 100)
+        html_rows.append(
+            f"""
+            <div class="composition-row">
+                <div class="composition-head">
+                    <div class="composition-name">{item['nome']}</div>
+                    <div style="display:flex; gap:8px; align-items:baseline;">
+                        <div class="composition-value">{formatar_moeda(item['valor'])}</div>
+                        <div class="composition-pct">{pct_texto}</div>
+                    </div>
+                </div>
+                <div class="composition-bar-wrap">
+                    <div class="composition-bar-fill" style="width:{largura:.1f}%"></div>
+                </div>
+            </div>
+            """
+        )
+
+    ajuda = f"Composição do acumulado de jan/2026 até {periodo_atual}"
+    st.markdown(
+        f"""
+        <div class="side-card composition-card">
+            <div class="composition-title">Composição do Resultado Total acumulado</div>
+            {''.join(html_rows)}
+            <div class="composition-help">{ajuda}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def adicionar_coluna_variacao_tabela(tabela, periodos_df, periodo_atual):
     coluna_delta = "Δ mês anterior"
     tabela = tabela.copy()
@@ -1641,6 +1799,7 @@ with tab_resultados:
                 df_principais, periodo_sel
             )
             card_resultado_total_acumulado(valor_acumulado, variacao_acumulado, valor_acumulado_anterior, periodo_sel)
+            card_composicao_resultado_total_acumulado(df_principais, periodo_sel)
 
     st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
