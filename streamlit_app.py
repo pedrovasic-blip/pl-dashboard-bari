@@ -1555,7 +1555,7 @@ with tab_resultados:
     if df_principais.empty:
         st.warning("Não encontrei as linhas principais na aba RESULTADO. Verifique os nomes das linhas na planilha.")
     else:
-        col_grafico, col_card_variacao = st.columns([4.2, 1])
+        col_grafico, col_card_variacao = st.columns([5.2, 1])
 
         with col_grafico:
             base_linhas = df_principais.sort_values(["Indicador", "Data"]).copy()
@@ -1614,7 +1614,7 @@ with tab_resultados:
                 paper_bgcolor="#080f1f",
                 plot_bgcolor="#080f1f",
                 height=500,
-                margin=dict(l=10, r=110, t=35, b=20),
+                margin=dict(l=10, r=40, t=35, b=20),
                 legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
             )
             fig.update_xaxes(
@@ -1622,6 +1622,7 @@ with tab_resultados:
                 tickvals=tick_datas,
                 ticktext=tick_textos,
                 range=[x_min, x_max],
+                title_text="",
                 showgrid=False,
                 zeroline=False,
             )
@@ -1629,6 +1630,7 @@ with tab_resultados:
                 tickprefix="R$ ",
                 separatethousands=True,
                 range=[y_min - y_pad, y_max + y_pad],
+                title_text="",
                 showgrid=False,
                 zeroline=False,
             )
