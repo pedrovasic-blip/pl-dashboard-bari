@@ -1012,7 +1012,7 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
     lista_periodos_pnl = [item["Período"] for item in periodos_pnl]
 
     st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-    col_data, col_produto, col_espaco = st.columns([1, 1, 2])
+    col_data, col_empresa, col_produto, col_espaco = st.columns([1, 1, 1, 1.5])
 
     with col_data:
         data_sel_pnl = st.selectbox(
@@ -1022,12 +1022,31 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
             key=f"data_pnl_{pagina.lower()}",
         )
 
+    with col_empresa:
+        empresa_sel_pnl = st.selectbox(
+            "Empresa",
+            ["Todos", "Banco", "Hipotecária"],
+            index=0,
+            key=f"empresa_pnl_{pagina.lower()}",
+        )
+
+    mapa_empresa_produto = {"Banco": "Consignado", "Hipotecária": "Imobiliário"}
+    if empresa_sel_pnl == "Todos":
+        opcoes_produto = ["Consignado", "Imobiliário", "Total"]
+        index_produto = 2
+        produto_disabled = False
+    else:
+        opcoes_produto = [mapa_empresa_produto[empresa_sel_pnl]]
+        index_produto = 0
+        produto_disabled = True
+
     with col_produto:
         produto_sel_pnl = st.selectbox(
             "Produto",
-            ["Consignado", "Imobiliário", "Total"],
-            index=2,
+            opcoes_produto,
+            index=index_produto,
             key=f"produto_pnl_{pagina.lower()}",
+            disabled=produto_disabled,
         )
 
     if pagina == "Acumulado":
@@ -1453,53 +1472,58 @@ def card_resultado_total_acumulado(valor_acumulado, variacao, valor_acumulado_an
     )
 
 
-def composicao_resultado_total_acumulado(df_principais, periodo_atual):
-    linha_atual = df_principais[
-        (df_principais["Indicador"] == "Resultado Total")
-        & (df_principais["Período"] == periodo_atual)
-    ]
-
-    if linha_atual.empty:
+def composicao_resultado_total_acumulado_produto(df_pnl_completo, periodo_atual, empresa_sel="Todos"):
+    if df_pnl_completo is None or df_pnl_completo.empty:
         return None, []
 
-    data_atual = linha_atual["Data"].iloc[0]
-    ano_atual = pd.Timestamp(data_atual).year
-    data_inicio = pd.Timestamp(ano_atual, 1, 1)
+    df_periodo = filtrar_pnl_acumulado(df_pnl_completo, periodo_atual)
+    df_acumulado = agregar_pnl_acumulado(df_periodo)
+    if df_acumulado.empty:
+        return None, []
 
-    def acumulado(indicador):
-        base = df_principais[
-            (df_principais["Indicador"] == indicador)
-            & (df_principais["Data"] >= data_inicio)
-            & (df_principais["Data"] <= data_atual)
-        ]
-        return float(base["Valor"].sum()) if not base.empty else 0.0
+    linhas_principais = obter_linhas_principais_pnl(df_acumulado)
+    linha_resultado_contabil = next(
+        (linha for linha in linhas_principais if normalizar_texto(linha) in ["resultado contabil", "resultado contábil"]),
+        None,
+    )
 
-    total = acumulado("Resultado Total")
-    conglomerado = acumulado("Resultado Conglomerado Financeiro")
-    coligadas = acumulado("Resultado Coligadas")
-    cong_colig = acumulado("Resultado Conglomerado + Coligadas")
-    ajustes = total - cong_colig
+    if linha_resultado_contabil is None:
+        candidatos = df_acumulado[df_acumulado["Linha_Normalizada"].str.contains("resultado contabil", na=False, regex=False)]
+        if not candidatos.empty:
+            linha_resultado_contabil = candidatos.sort_values("Ordem_Linha").iloc[0]["Linha"]
 
-    componentes = [
-        ("Congl. Financeiro", conglomerado),
-        ("Coligadas", coligadas),
-    ]
+    if linha_resultado_contabil is None:
+        return None, []
 
-    if abs(ajustes) > 0.5:
-        componentes.append(("Ajustes / Outros", ajustes))
+    valor_total = valor_pnl(df_acumulado, "Total", linha_resultado_contabil, "Realizado")
+    valor_consignado = valor_pnl(df_acumulado, "Consignado", linha_resultado_contabil, "Realizado")
+    valor_imobiliario = valor_pnl(df_acumulado, "Imobiliário", linha_resultado_contabil, "Realizado")
+    valor_ajustes = valor_total - (valor_consignado + valor_imobiliario)
+
+    if empresa_sel == "Banco":
+        componentes = [("Consignado", valor_consignado)]
+        total_base = valor_consignado
+    elif empresa_sel == "Hipotecária":
+        componentes = [("Imobiliário", valor_imobiliario)]
+        total_base = valor_imobiliario
+    else:
+        componentes = [("Consignado", valor_consignado), ("Imobiliário", valor_imobiliario)]
+        if abs(valor_ajustes) > 0.5:
+            componentes.append(("Ajustes / Outros", valor_ajustes))
+        total_base = valor_total
 
     itens = []
-    base_pct = abs(total) if total not in (None, 0) else None
+    base_pct = abs(total_base) if total_base not in (None, 0) else None
     for nome, valor in componentes:
         pct = (valor / base_pct) if base_pct else None
         itens.append({"nome": nome, "valor": valor, "pct": pct})
 
-    return total, itens
+    return total_base, itens
 
 
 
-def card_composicao_resultado_total_acumulado(df_principais, periodo_atual):
-    total, itens = composicao_resultado_total_acumulado(df_principais, periodo_atual)
+def card_composicao_resultado_total_acumulado(df_pnl_completo, periodo_atual, empresa_sel="Todos"):
+    total, itens = composicao_resultado_total_acumulado_produto(df_pnl_completo, periodo_atual, empresa_sel)
 
     if total is None or not itens:
         html = (
@@ -1542,6 +1566,29 @@ def card_composicao_resultado_total_acumulado(df_principais, periodo_atual):
         + '</div>'
     )
     st.markdown(html, unsafe_allow_html=True)
+
+
+
+def filtrar_tabela_resultado_por_empresa(tabela, empresa_sel):
+    if empresa_sel == "Todos" or tabela.empty:
+        return tabela
+
+    col_nome = tabela.columns[0]
+    base = tabela.copy()
+    base["_nome_norm"] = base[col_nome].astype(str).map(normalizar_texto)
+
+    banco_set = {"banco", "equiv patr", "jcp dividendos", "resultado banco"}
+
+    if empresa_sel == "Banco":
+        filtrada = base[base["_nome_norm"].isin(banco_set) | base["_nome_norm"].str.contains("banco", regex=False, na=False)]
+    else:
+        filtrada = base[
+            ~base["_nome_norm"].isin(banco_set)
+            & ~base["_nome_norm"].eq("resultado total")
+        ]
+
+    return filtrada.drop(columns=["_nome_norm"])
+
 
 def adicionar_coluna_variacao_tabela(tabela, periodos_df, periodo_atual):
     coluna_delta = "Δ mês anterior"
@@ -1645,6 +1692,13 @@ except Exception as erro:
     st.error(f"Erro ao carregar a aba RESULTADO: {erro}")
     st.stop()
 
+try:
+    df_pnl_completo_global = carregar_pnl_mensal(arquivo)
+    erro_pnl_global = None
+except Exception as erro_pnl:
+    df_pnl_completo_global = pd.DataFrame()
+    erro_pnl_global = erro_pnl
+
 periodos_disponiveis = (
     df_resultado[["Data", "Período"]]
     .drop_duplicates()
@@ -1672,12 +1726,20 @@ tab_resultados, tab_pnl_mensal, tab_pnl_acum = st.tabs(
 
 with tab_resultados:
     st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-    col_filtro_mes, col_filtro_vazio = st.columns([1, 3])
+    col_filtro_mes, col_filtro_empresa, col_filtro_vazio = st.columns([1, 1, 2])
     with col_filtro_mes:
         periodo_sel = st.selectbox(
             "Mês de referência",
             periodos_disponiveis["Período"].tolist(),
             index=periodo_padrao,
+            key="periodo_resultados",
+        )
+    with col_filtro_empresa:
+        empresa_sel_result = st.selectbox(
+            "Empresa",
+            ["Todos", "Banco", "Hipotecária"],
+            index=0,
+            key="empresa_resultados",
         )
 
     df_principais = montar_resultados_principais(df_resultado)
@@ -1793,11 +1855,12 @@ with tab_resultados:
                 df_principais, periodo_sel
             )
             card_resultado_total_acumulado(valor_acumulado, variacao_acumulado, valor_acumulado_anterior, periodo_sel)
-            card_composicao_resultado_total_acumulado(df_principais, periodo_sel)
+            card_composicao_resultado_total_acumulado(df_pnl_completo_global, periodo_sel, empresa_sel_result)
 
     st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
     tabela = montar_tabela_empresas_e_total(df_resultado)
+    tabela = filtrar_tabela_resultado_por_empresa(tabela, empresa_sel_result)
     tabela, coluna_delta = adicionar_coluna_variacao_tabela(tabela, periodos_disponiveis, periodo_sel)
 
     tabela_valores = tabela.copy()
@@ -1815,18 +1878,14 @@ with tab_resultados:
     st.markdown(tabela_html(tabela_formatada, tabela_valores, coluna_delta=coluna_delta), unsafe_allow_html=True)
 
 with tab_pnl_mensal:
-    try:
-        df_pnl_completo = carregar_pnl_mensal(arquivo)
-        render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal")
-
-    except Exception as erro:
-        st.info(f"Não consegui carregar a aba P&L Mensal: {erro}")
+    if erro_pnl_global is None and not df_pnl_completo_global.empty:
+        render_pnl_page(df_pnl_completo_global, arquivo, pagina="Mensal")
+    else:
+        st.info(f"Não consegui carregar a aba P&L Mensal: {erro_pnl_global}")
 
 with tab_pnl_acum:
-    try:
-        df_pnl_completo = carregar_pnl_mensal(arquivo)
-        render_pnl_page(df_pnl_completo, arquivo, pagina="Acumulado")
-
-    except Exception as erro:
-        st.info(f"Não consegui carregar a aba P&L Acumulado: {erro}")
+    if erro_pnl_global is None and not df_pnl_completo_global.empty:
+        render_pnl_page(df_pnl_completo_global, arquivo, pagina="Acumulado")
+    else:
+        st.info(f"Não consegui carregar a aba P&L Acumulado: {erro_pnl_global}")
 
