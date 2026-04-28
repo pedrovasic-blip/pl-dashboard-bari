@@ -1490,8 +1490,8 @@ st.sidebar.markdown(
 st.markdown('<div class="dash-title">Dashboard P&L 2026</div>', unsafe_allow_html=True)
 st.markdown('<div class="dash-subtitle">Resultados consolidados, evolução histórica e abertura por empresa.</div>', unsafe_allow_html=True)
 
-tab_resultados, tab_pnl_mensal, tab_pnl_acum, tab_base = st.tabs(
-    ["Resultados", "P&L Mensal", "P&L Acumulado", "Base"]
+tab_resultados, tab_pnl_mensal, tab_pnl_acum = st.tabs(
+    ["Resultados", "P&L Mensal", "P&L Acumulado"]
 )
 
 with tab_resultados:
@@ -1609,17 +1609,3 @@ with tab_pnl_acum:
     except Exception as erro:
         st.info(f"Não consegui carregar a aba P&L Acumulado: {erro}")
 
-with tab_base:
-    st.markdown('<div class="section-title">Base lida da aba RESULTADO</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"""
-        <div class="note-box">
-            Linhas lidas: <b>{len(df_resultado):,}</b><br>
-            Períodos encontrados: <b>{", ".join(periodos_disponiveis["Período"].tolist())}</b><br>
-            Filtro aplicado: <b>jan/2026 em diante</b><br>
-            Aba principal: <b>{ABA_RESULTADO}</b>
-        </div>
-        """.replace(",", "."),
-        unsafe_allow_html=True,
-    )
-    st.dataframe(df_resultado.drop(columns=["Linha_Normalizada"], errors="ignore"), use_container_width=True, hide_index=True)
