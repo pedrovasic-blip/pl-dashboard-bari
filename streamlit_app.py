@@ -759,9 +759,46 @@ def valor_pnl(df, produto, linha, metrica):
     return base["Valor"].sum()
 
 
+def variacao_pnl_mes_anterior(df_pnl_completo, produto, linha, periodo_atual):
+    linha_atual = df_pnl_completo[
+        (df_pnl_completo["Produto"] == produto)
+        & (df_pnl_completo["Linha"] == linha)
+        & (df_pnl_completo["Métrica"] == "Realizado")
+        & (df_pnl_completo["Periodo"] == periodo_atual)
+    ]
+
+    if linha_atual.empty:
+        return None
+
+    data_atual = linha_atual["Data"].iloc[0]
+    anteriores = (
+        df_pnl_completo[
+            (df_pnl_completo["Produto"] == produto)
+            & (df_pnl_completo["Linha"] == linha)
+            & (df_pnl_completo["Métrica"] == "Realizado")
+            & (df_pnl_completo["Data"] < data_atual)
+        ]
+        .sort_values("Data")
+    )
+
+    if anteriores.empty:
+        return None
+
+    periodo_anterior = anteriores["Periodo"].iloc[-1]
+
+    valor_atual = linha_atual["Valor"].sum()
+    valor_anterior = anteriores[anteriores["Periodo"] == periodo_anterior]["Valor"].sum()
+
+    if valor_anterior == 0:
+        return None
+
+    return (valor_atual - valor_anterior) / abs(valor_anterior)
+
+
 def card_pnl(titulo, valor, variacao=None):
-    delta_html = ""
-    if variacao is not None and pd.notna(variacao):
+    if variacao is None or pd.isna(variacao):
+        delta_html = '<div class="kpi-delta delta-neutral">N/D</div>'
+    else:
         delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
 
     st.markdown(
@@ -1308,7 +1345,8 @@ with tab_resultados:
 
 with tab_pnl_mensal:
     try:
-        df_pnl = carregar_pnl_mensal(arquivo)
+        df_pnl_completo = carregar_pnl_mensal(arquivo)
+        df_pnl = df_pnl_completo.copy()
 
         periodos_pnl = obter_periodos_pnl_mensal_anualizado(arquivo)
         lista_periodos_pnl = [item["Período"] for item in periodos_pnl]
@@ -1342,7 +1380,7 @@ with tab_pnl_mensal:
             cols_cards = st.columns(4)
             for col_card, linha in zip(cols_cards, linhas_principais[inicio:inicio + 4]):
                 realizado = valor_pnl(df_pnl, produto_sel_pnl, linha, "Realizado")
-                variacao = valor_pnl(df_pnl, produto_sel_pnl, linha, "Δ %")
+                variacao = variacao_pnl_mes_anterior(df_pnl_completo, produto_sel_pnl, linha, data_sel_pnl)
                 with col_card:
                     card_pnl(linha, realizado, variacao=variacao)
 
