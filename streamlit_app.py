@@ -450,7 +450,7 @@ def formatar_variacao(valor):
         valor = 0.0
 
     sinal = "+" if valor > 0 else ""
-    texto = f"Δ {sinal}{valor * 100:,.1f}%"
+    texto = f"Δ mês anterior {sinal}{valor * 100:,.1f}%"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
