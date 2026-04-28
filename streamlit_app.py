@@ -553,115 +553,149 @@ def carregar_base_dash(arquivo):
 
 
 
-def obter_periodo_pnl_mensal(arquivo):
+def obter_periodos_pnl_mensal_anualizado(arquivo):
     try:
-        bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal", header=None, engine="openpyxl")
-        for _, row in bruto.iterrows():
-            for valor in row.tolist():
-                data = converter_periodo(valor)
-                if data is not None and pd.Timestamp(data).year >= 2020:
-                    return nome_periodo(data), pd.Timestamp(data)
+        bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal - Anualizado", header=None, engine="openpyxl")
     except Exception:
-        pass
+        bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal", header=None, engine="openpyxl")
 
-    return "Período atual", None
+    periodos = []
+
+    for _, row in bruto.iterrows():
+        valores = row.tolist()
+        for valor in valores:
+            data = converter_periodo(valor)
+            if data is not None and pd.Timestamp(data).year >= 2020:
+                data_ts = pd.Timestamp(data)
+                item = {"Período": nome_periodo(data_ts), "Data": data_ts}
+                if item not in periodos:
+                    periodos.append(item)
+
+    periodos = sorted(periodos, key=lambda x: x["Data"])
+
+    if not periodos:
+        return [{"Período": "Período atual", "Data": None}]
+
+    return periodos
 
 
 @st.cache_data(show_spinner=False)
 def carregar_pnl_mensal(arquivo):
-    bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal", header=None, engine="openpyxl")
+    try:
+        bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal - Anualizado", header=None, engine="openpyxl")
+    except Exception:
+        bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal", header=None, engine="openpyxl")
+
     bruto = bruto.dropna(how="all")
 
-    linha_produto = None
-    produtos_encontrados = {}
+    registros = []
 
     for idx in bruto.index:
         for col in bruto.columns:
-            texto = normalizar_texto(bruto.loc[idx, col])
-            if texto in ["consignado", "imobiliario", "total"]:
-                nome = {
-                    "consignado": "Consignado",
-                    "imobiliario": "Imobiliário",
-                    "total": "Total",
-                }[texto]
-                produtos_encontrados[nome] = col
-
-        if {"Consignado", "Imobiliário", "Total"}.issubset(set(produtos_encontrados.keys())):
-            linha_produto = idx
-            break
-
-    if linha_produto is None:
-        raise ValueError("Não encontrei os blocos Consignado, Imobiliário e Total na aba P&L Mensal.")
-
-    linha_metrica = linha_produto + 1
-    col_rotulo = min(produtos_encontrados.values()) - 1
-
-    produtos_ordenados = sorted(produtos_encontrados.items(), key=lambda x: x[1])
-    blocos = []
-
-    for i, (produto, col_inicio) in enumerate(produtos_ordenados):
-        col_fim = produtos_ordenados[i + 1][1] if i + 1 < len(produtos_ordenados) else max(bruto.columns) + 1
-
-        for col in range(col_inicio, col_fim):
-            metrica_norm = normalizar_texto(bruto.loc[linha_metrica, col]) if col in bruto.columns else ""
-
-            if metrica_norm == "realizado":
-                metrica = "Realizado"
-            elif metrica_norm == "orcado":
-                metrica = "Orçado"
-            elif metrica_norm in ["", "nan"]:
-                continue
-            elif "r" in metrica_norm and ("delta" in metrica_norm or metrica_norm == "r"):
-                metrica = "Δ R$"
-            elif "%" in str(bruto.loc[linha_metrica, col]) or "delta" in metrica_norm or metrica_norm in ["", ""]:
-                metrica = "Δ %"
-            else:
-                metrica = str(bruto.loc[linha_metrica, col]).strip()
-
-            blocos.append({"Produto": produto, "Coluna": col, "Métrica": metrica})
-
-    registros = []
-    ordem = 0
-
-    for idx in bruto.index:
-        if idx <= linha_metrica:
-            continue
-
-        linha_nome = bruto.loc[idx, col_rotulo] if col_rotulo in bruto.columns else None
-        if pd.isna(linha_nome) or str(linha_nome).strip() == "":
-            continue
-
-        linha_tem_valor = False
-
-        for bloco in blocos:
-            col = bloco["Coluna"]
-            if col not in bruto.columns:
+            if normalizar_texto(bruto.loc[idx, col]) != "data base":
                 continue
 
-            valor = pd.to_numeric(bruto.loc[idx, col], errors="coerce")
-            if pd.notna(valor):
-                linha_tem_valor = True
-                registros.append(
-                    {
-                        "Produto": bloco["Produto"],
-                        "Linha": str(linha_nome).strip(),
-                        "Linha_Normalizada": normalizar_texto(linha_nome),
-                        "Métrica": bloco["Métrica"],
-                        "Valor": float(valor),
-                        "Ordem_Linha": ordem,
-                    }
-                )
+            linha_data = idx
+            linha_produto = idx + 2
+            linha_metrica = idx + 3
+            col_rotulo = col
 
-        if linha_tem_valor:
-            ordem += 1
+            data_base = None
+            for c_data in range(col + 1, min(col + 12, max(bruto.columns) + 1)):
+                if c_data in bruto.columns:
+                    data_base = converter_periodo(bruto.loc[linha_data, c_data])
+                    if data_base is not None:
+                        break
+
+            if data_base is None:
+                continue
+
+            produtos_encontrados = {}
+            for c_prod in range(col + 1, min(col + 12, max(bruto.columns) + 1)):
+                if c_prod not in bruto.columns:
+                    continue
+
+                produto_norm = normalizar_texto(bruto.loc[linha_produto, c_prod])
+                if produto_norm in ["consignado", "imobiliario", "total"]:
+                    produtos_encontrados[
+                        {
+                            "consignado": "Consignado",
+                            "imobiliario": "Imobiliário",
+                            "total": "Total",
+                        }[produto_norm]
+                    ] = c_prod
+
+            if not {"Consignado", "Imobiliário", "Total"}.issubset(set(produtos_encontrados.keys())):
+                continue
+
+            produtos_ordenados = sorted(produtos_encontrados.items(), key=lambda x: x[1])
+            blocos = []
+
+            for i, (produto, col_inicio) in enumerate(produtos_ordenados):
+                col_fim = produtos_ordenados[i + 1][1] if i + 1 < len(produtos_ordenados) else min(col + 12, max(bruto.columns) + 1)
+
+                for c_met in range(col_inicio, col_fim):
+                    if c_met not in bruto.columns:
+                        continue
+
+                    metrica_original = bruto.loc[linha_metrica, c_met]
+                    metrica_norm = normalizar_texto(metrica_original)
+
+                    if metrica_norm == "realizado":
+                        metrica = "Realizado"
+                    elif metrica_norm == "orcado":
+                        metrica = "Orçado"
+                    elif "r" in metrica_norm and ("r" == metrica_norm or "rs" in metrica_norm):
+                        metrica = "Δ R$"
+                    elif "%" in str(metrica_original) or "delta" in metrica_norm or metrica_norm in [""]:
+                        metrica = "Δ %"
+                    else:
+                        continue
+
+                    blocos.append({"Produto": produto, "Coluna": c_met, "Métrica": metrica})
+
+            ordem = 0
+
+            for r in bruto.index:
+                if r <= linha_metrica:
+                    continue
+
+                linha_nome = bruto.loc[r, col_rotulo] if col_rotulo in bruto.columns else None
+                if pd.isna(linha_nome) or str(linha_nome).strip() == "":
+                    continue
+
+                linha_tem_valor = False
+
+                for bloco in blocos:
+                    c_val = bloco["Coluna"]
+                    if c_val not in bruto.columns:
+                        continue
+
+                    valor = pd.to_numeric(bruto.loc[r, c_val], errors="coerce")
+                    if pd.notna(valor):
+                        linha_tem_valor = True
+                        registros.append(
+                            {
+                                "Periodo": nome_periodo(data_base),
+                                "Data": pd.Timestamp(data_base),
+                                "Produto": bloco["Produto"],
+                                "Linha": str(linha_nome).strip(),
+                                "Linha_Normalizada": normalizar_texto(linha_nome),
+                                "Métrica": bloco["Métrica"],
+                                "Valor": float(valor),
+                                "Ordem_Linha": ordem,
+                            }
+                        )
+
+                if linha_tem_valor:
+                    ordem += 1
 
     df = pd.DataFrame(registros)
 
     if df.empty:
-        raise ValueError("A aba P&L Mensal foi encontrada, mas nenhum valor numérico foi lido.")
+        raise ValueError("A aba P&L Mensal - Anualizado foi encontrada, mas nenhum valor numérico foi lido.")
 
     return df
-
 
 def obter_linhas_principais_pnl(df_pnl):
     linhas_desejadas = [
@@ -1254,17 +1288,17 @@ with tab_resultados:
 with tab_pnl_mensal:
     try:
         df_pnl = carregar_pnl_mensal(arquivo)
-        linhas_principais = obter_linhas_principais_pnl(df_pnl)
 
-        periodo_pnl, data_pnl = obter_periodo_pnl_mensal(arquivo)
+        periodos_pnl = obter_periodos_pnl_mensal_anualizado(arquivo)
+        lista_periodos_pnl = [item["Período"] for item in periodos_pnl]
 
         st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
         col_data, col_produto, col_espaco = st.columns([1, 1, 2])
         with col_data:
             data_sel_pnl = st.selectbox(
                 "Data base",
-                [periodo_pnl],
-                index=0,
+                lista_periodos_pnl,
+                index=len(lista_periodos_pnl) - 1,
                 key="data_pnl_mensal",
             )
         with col_produto:
@@ -1274,6 +1308,9 @@ with tab_pnl_mensal:
                 index=2,
                 key="produto_pnl_mensal",
             )
+
+        df_pnl = df_pnl[df_pnl["Periodo"] == data_sel_pnl].copy()
+        linhas_principais = obter_linhas_principais_pnl(df_pnl)
 
         st.markdown('<div class="section-title">Principais linhas do P&L Mensal</div>', unsafe_allow_html=True)
 
