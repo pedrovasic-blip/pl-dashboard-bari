@@ -1578,14 +1578,14 @@ with tab_resultados:
                 )
 
             offsets_rotulo = {
-                "Resultado Total": {"xshift": 22, "yshift": 20},
-                "Resultado Conglomerado + Coligadas": {"xshift": 22, "yshift": -20},
-                "Resultado Conglomerado Financeiro": {"xshift": 18, "yshift": 14},
-                "Resultado Coligadas": {"xshift": 18, "yshift": -16},
+                "Resultado Total": {"xshift": 0, "yshift": 18, "xanchor": "center"},
+                "Resultado Conglomerado + Coligadas": {"xshift": 0, "yshift": -18, "xanchor": "center"},
+                "Resultado Conglomerado Financeiro": {"xshift": 0, "yshift": 18, "xanchor": "center"},
+                "Resultado Coligadas": {"xshift": 0, "yshift": -18, "xanchor": "center"},
             }
 
             for _, row in base_linhas.iterrows():
-                desloc = offsets_rotulo.get(row["Indicador"], {"xshift": 18, "yshift": 18})
+                desloc = offsets_rotulo.get(row["Indicador"], {"xshift": 0, "yshift": 18, "xanchor": "center"})
                 fig.add_annotation(
                     x=row["Data"],
                     y=row["Valor"],
@@ -1593,9 +1593,9 @@ with tab_resultados:
                     showarrow=False,
                     xshift=desloc["xshift"],
                     yshift=desloc["yshift"],
-                    font=dict(size=16, color="#FFFFFF", family="Arial Black"),
-                    xanchor="left",
-                    align="left",
+                    font=dict(size=14, color="#FFFFFF", family="Arial Black"),
+                    xanchor=desloc["xanchor"],
+                    align="center",
                     bgcolor="rgba(0,0,0,0)",
                 )
 
