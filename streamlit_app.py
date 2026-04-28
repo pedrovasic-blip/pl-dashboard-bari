@@ -1,7 +1,11 @@
-import streamlit as st
+import re
+import unicodedata
+from pathlib import Path
+
 import pandas as pd
 import plotly.express as px
-from pathlib import Path
+import streamlit as st
+
 
 st.set_page_config(
     page_title="Dashboard P&L 2026",
@@ -11,356 +15,420 @@ st.set_page_config(
 )
 
 ARQUIVO_PADRAO = "2026_03_PL_com_BASE_DASH_v2.xlsx"
+ABA_RESULTADO = "RESULTADO"
 ABA_BASE = "BASE_DASH"
 
-CUSTOM_CSS = """
+CSS = """
 <style>
-    .stApp {
-        background: #080f1f;
-        color: #e5ecff;
-    }
-    [data-testid="stSidebar"] {
-        background: #0b1224;
-        border-right: 1px solid #1e2a44;
-    }
-    [data-testid="stHeader"] {
-        background: rgba(8, 15, 31, 0.95);
-    }
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-    }
-    .title {
-        font-size: 2.2rem;
-        font-weight: 800;
-        margin-bottom: 0.15rem;
-    }
-    .subtitle {
-        color: #8ea0c9;
-        font-size: 0.95rem;
-        margin-bottom: 1.4rem;
-    }
+    .stApp { background: #080f1f; color: #e5ecff; }
+    [data-testid="stSidebar"] { background: #0b1224; border-right: 1px solid #1e2a44; }
+    [data-testid="stHeader"] { background: rgba(8, 15, 31, .95); }
+    .block-container { padding-top: 1.4rem; padding-bottom: 2rem; }
+    .dash-title { font-size: 2.25rem; font-weight: 850; color: #ffffff; letter-spacing: .2px; margin-bottom: .2rem; }
+    .dash-subtitle { color: #9fb2df; font-size: .95rem; margin-bottom: 1.3rem; }
+    .section-title { color: #ffffff; font-size: 1.25rem; font-weight: 750; margin-top: 1.1rem; margin-bottom: .6rem; }
     .kpi-card {
         background: #111a2e;
-        border: 1px solid #1e2a44;
-        border-radius: 14px;
+        border: 1px solid #243150;
+        border-radius: 16px;
         padding: 18px 18px;
-        min-height: 112px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+        min-height: 118px;
+        box-shadow: 0 10px 26px rgba(0,0,0,.20);
     }
-    .kpi-label {
-        color: #8ea0c9;
-        font-size: 0.78rem;
-        margin-bottom: 8px;
-    }
-    .kpi-value {
-        color: #ffffff;
-        font-size: 1.55rem;
-        font-weight: 800;
-        line-height: 1.2;
-    }
-    .kpi-help {
-        color: #5f719a;
-        font-size: 0.72rem;
-        margin-top: 7px;
-    }
-    div[data-testid="stMetricValue"] {
-        color: #ffffff;
-    }
-    div[data-testid="stMetricLabel"] {
-        color: #8ea0c9;
-    }
-    .section-title {
-        font-size: 1.25rem;
-        font-weight: 700;
-        margin-top: 1rem;
-        margin-bottom: 0.5rem;
-    }
-    .info-box {
+    .kpi-label { color: #9fb2df; font-size: .78rem; margin-bottom: 10px; }
+    .kpi-value { color: #ffffff; font-size: 1.65rem; font-weight: 850; line-height: 1.15; }
+    .kpi-help { color: #60759f; font-size: .72rem; margin-top: 9px; }
+    .note-box {
         background: #111a2e;
-        border: 1px solid #1e2a44;
+        border: 1px solid #243150;
         border-radius: 14px;
-        padding: 14px 16px;
-        color: #8ea0c9;
+        padding: 13px 16px;
+        color: #9fb2df;
     }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-        border-bottom: 1px solid #1e2a44;
-    }
-    .stTabs [data-baseweb="tab"] {
-        color: #8ea0c9;
-        background: transparent;
-        border-radius: 10px 10px 0 0;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #ffffff;
-        border-bottom: 2px solid #1f77ff;
-    }
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; border-bottom: 1px solid #243150; }
+    .stTabs [data-baseweb="tab"] { color: #9fb2df; background: transparent; }
+    .stTabs [aria-selected="true"] { color: #ffffff; border-bottom: 2px solid #24a8ff; }
+    div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 </style>
 """
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(CSS, unsafe_allow_html=True)
 
 
-@st.cache_data(show_spinner=False)
-def carregar_base(arquivo):
-    df = pd.read_excel(arquivo, sheet_name=ABA_BASE)
-
-    # Remove colunas vazias/auxiliares geradas pelo Excel.
-    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
-    df = df.drop(columns=[c for c in df.columns if c.lower().startswith("observ")], errors="ignore")
-
-    # Padronizações básicas.
-    for col in ["Visao", "Linha_PnL", "Produto", "Metrica", "Aba_Origem", "Celula_Origem"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-
-    if "Valor" in df.columns:
-        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
-
-    # Tenta converter datas, inclusive serial Excel.
-    for col in ["Data_Inicio", "Data_Fim", "Data_Base"]:
-        if col in df.columns:
-            s = df[col]
-            if pd.api.types.is_numeric_dtype(s):
-                df[col] = pd.to_datetime(s, unit="D", origin="1899-12-30", errors="coerce")
-            else:
-                df[col] = pd.to_datetime(s, errors="coerce", dayfirst=True)
-
-    if "Periodo" in df.columns:
-        df["Periodo"] = df["Periodo"].astype(str).replace("nan", "")
-
-    return df
+def normalizar_texto(valor):
+    if pd.isna(valor):
+        return ""
+    texto = str(valor).strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
 
 
-def fmt_moeda(valor):
+def formatar_moeda(valor):
     try:
         valor = float(valor)
     except Exception:
-        valor = 0
+        valor = 0.0
+
     sinal = "-" if valor < 0 else ""
-    valor = abs(valor)
+    valor_abs = abs(valor)
 
-    if valor >= 1_000_000_000:
-        return f"{sinal}R$ {valor/1_000_000_000:,.2f} bi".replace(",", "X").replace(".", ",").replace("X", ".")
-    if valor >= 1_000_000:
-        return f"{sinal}R$ {valor/1_000_000:,.2f} mi".replace(",", "X").replace(".", ",").replace("X", ".")
-    if valor >= 1_000:
-        return f"{sinal}R$ {valor/1_000:,.1f} mil".replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"{sinal}R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    if valor_abs >= 1_000_000_000:
+        texto = f"{sinal}R$ {valor_abs / 1_000_000_000:,.2f} bi"
+    elif valor_abs >= 1_000_000:
+        texto = f"{sinal}R$ {valor_abs / 1_000_000:,.2f} mi"
+    elif valor_abs >= 1_000:
+        texto = f"{sinal}R$ {valor_abs / 1_000:,.1f} mil"
+    else:
+        texto = f"{sinal}R$ {valor_abs:,.2f}"
+
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def fmt_num(valor):
+def formatar_numero(valor):
+    if pd.isna(valor):
+        return ""
     try:
         valor = float(valor)
     except Exception:
-        valor = 0
+        return str(valor)
     return f"{valor:,.0f}".replace(",", ".")
 
 
-def card(label, value, help_text=""):
+def converter_periodo(valor):
+    if pd.isna(valor):
+        return None
+
+    if isinstance(valor, pd.Timestamp):
+        return valor.to_period("M").to_timestamp()
+
+    if hasattr(valor, "year") and hasattr(valor, "month"):
+        try:
+            return pd.Timestamp(valor.year, valor.month, 1)
+        except Exception:
+            pass
+
+    texto = str(valor).strip().lower()
+    if not texto or texto == "nan":
+        return None
+
+    meses = {
+        "jan": 1, "janeiro": 1,
+        "fev": 2, "fevereiro": 2,
+        "mar": 3, "marco": 3, "março": 3,
+        "abr": 4, "abril": 4,
+        "mai": 5, "maio": 5,
+        "jun": 6, "junho": 6,
+        "jul": 7, "julho": 7,
+        "ago": 8, "agosto": 8,
+        "set": 9, "sep": 9, "setembro": 9,
+        "out": 10, "oct": 10, "outubro": 10,
+        "nov": 11, "novembro": 11,
+        "dez": 12, "dec": 12, "dezembro": 12,
+    }
+
+    texto_sem_acento = normalizar_texto(texto)
+    partes = texto_sem_acento.split()
+
+    mes = None
+    ano = None
+
+    for parte in partes:
+        if parte in meses:
+            mes = meses[parte]
+        elif re.fullmatch(r"\d{4}", parte):
+            ano = int(parte)
+        elif re.fullmatch(r"\d{2}", parte):
+            ano = 2000 + int(parte)
+
+    if mes and ano:
+        return pd.Timestamp(ano, mes, 1)
+
+    tentativa = pd.to_datetime(texto, errors="coerce", dayfirst=True)
+    if pd.notna(tentativa):
+        return tentativa.to_period("M").to_timestamp()
+
+    return None
+
+
+def nome_periodo(data):
+    if pd.isna(data):
+        return ""
+    meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+    data = pd.Timestamp(data)
+    return f"{meses[data.month - 1]}/{data.year}"
+
+
+def card(titulo, valor, ajuda):
     st.markdown(
         f"""
         <div class="kpi-card">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value">{value}</div>
-            <div class="kpi-help">{help_text}</div>
+            <div class="kpi-label">{titulo}</div>
+            <div class="kpi-value">{formatar_moeda(valor)}</div>
+            <div class="kpi-help">{ajuda}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-def escolher_linha(df, termos_preferidos):
-    linhas = sorted(df["Linha_PnL"].dropna().unique()) if "Linha_PnL" in df.columns else []
-    linhas_lower = {linha.lower(): linha for linha in linhas}
-    for termo in termos_preferidos:
-        for linha_lower, linha_original in linhas_lower.items():
-            if termo.lower() in linha_lower:
-                return linha_original
-    return linhas[0] if linhas else None
+@st.cache_data(show_spinner=False)
+def carregar_resultado(arquivo):
+    bruto = pd.read_excel(arquivo, sheet_name=ABA_RESULTADO, header=None, engine="openpyxl")
+    bruto = bruto.dropna(how="all").dropna(axis=1, how="all")
+
+    linha_mes = None
+    col_rotulo = None
+
+    for idx in bruto.index:
+        valores_norm = [normalizar_texto(v) for v in bruto.loc[idx].tolist()]
+        if "mes" in valores_norm:
+            linha_mes = idx
+            col_rotulo = valores_norm.index("mes")
+            break
+
+    if linha_mes is None:
+        raise ValueError("Não encontrei a linha de cabeçalho 'Mês' na aba RESULTADO.")
+
+    colunas_periodo = []
+    for col in bruto.columns:
+        if col <= col_rotulo:
+            continue
+        periodo = converter_periodo(bruto.loc[linha_mes, col])
+        if periodo is not None:
+            colunas_periodo.append((col, periodo))
+
+    if not colunas_periodo:
+        raise ValueError("Não encontrei os meses na aba RESULTADO.")
+
+    linhas = []
+    for idx in bruto.index:
+        if idx <= linha_mes:
+            continue
+
+        linha_nome = bruto.loc[idx, col_rotulo] if col_rotulo in bruto.columns else None
+        if pd.isna(linha_nome) or str(linha_nome).strip() == "":
+            continue
+
+        tem_valor = False
+        for col, periodo in colunas_periodo:
+            valor = pd.to_numeric(bruto.loc[idx, col], errors="coerce")
+            if pd.notna(valor):
+                tem_valor = True
+                linhas.append(
+                    {
+                        "Linha": str(linha_nome).strip(),
+                        "Linha_Normalizada": normalizar_texto(linha_nome),
+                        "Data": periodo,
+                        "Período": nome_periodo(periodo),
+                        "Valor": float(valor),
+                        "Ordem": len(linhas),
+                    }
+                )
+
+        if not tem_valor:
+            continue
+
+    df = pd.DataFrame(linhas)
+    if df.empty:
+        raise ValueError("A aba RESULTADO foi encontrada, mas não consegui transformar os resultados em tabela.")
+
+    ordem_linhas = (
+        df.groupby("Linha", as_index=False)["Ordem"]
+        .min()
+        .sort_values("Ordem")
+        .reset_index(drop=True)
+    )
+    mapa_ordem = {linha: i for i, linha in enumerate(ordem_linhas["Linha"])}
+    df["Ordem_Linha"] = df["Linha"].map(mapa_ordem)
+
+    return df
 
 
-# ==========================
-# Entrada de dados
-# ==========================
+@st.cache_data(show_spinner=False)
+def carregar_base_dash(arquivo):
+    df = pd.read_excel(arquivo, sheet_name=ABA_BASE, engine="openpyxl")
+    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
+    for col in ["Visao", "Linha_PnL", "Produto", "Metrica", "Periodo"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    if "Valor" in df.columns:
+        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+    return df
+
+
+def achar_linha(df, termos):
+    linhas = df[["Linha", "Linha_Normalizada"]].drop_duplicates()
+    for termo in termos:
+        termo_norm = normalizar_texto(termo)
+        encontrado = linhas[linhas["Linha_Normalizada"].str.contains(termo_norm, regex=False, na=False)]
+        if not encontrado.empty:
+            return encontrado.iloc[0]["Linha"]
+    return None
+
+
+def montar_resultados_principais(df):
+    specs = [
+        ("Resultado Conglomerado Financeiro", ["resultado congl financeiro", "resultado conglomerado financeiro"]),
+        ("Resultado Coligadas", ["resultado coligadas"]),
+        ("Resultado Conglomerado + Coligadas", ["resultado congl coligadas", "resultado conglomerado coligadas"]),
+        ("Resultado Total", ["res total", "resultado total"]),
+    ]
+
+    mapeamento = []
+    for titulo, termos in specs:
+        linha = achar_linha(df, termos)
+        if linha:
+            mapeamento.append({"Indicador": titulo, "Linha": linha})
+
+    if not mapeamento:
+        return pd.DataFrame(columns=["Indicador", "Linha", "Data", "Período", "Valor"])
+
+    mapa = pd.DataFrame(mapeamento)
+    return df.merge(mapa, on="Linha", how="inner")
+
+
+def tabela_resultado_aberto(df):
+    ordem = df[["Linha", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
+    tab = df.pivot_table(index="Linha", columns="Período", values="Valor", aggfunc="sum")
+    datas_ordem = df[["Período", "Data"]].drop_duplicates().sort_values("Data")
+    colunas = datas_ordem["Período"].tolist()
+    tab = tab.reindex(ordem["Linha"]).reindex(columns=colunas).reset_index()
+    return tab
+
 
 st.sidebar.title("Filtros")
-
 arquivo_local = Path(ARQUIVO_PADRAO)
 upload = st.sidebar.file_uploader("Atualizar base manualmente", type=["xlsx"])
 
-try:
-    if upload is not None:
-        df = carregar_base(upload)
-    elif arquivo_local.exists():
-        df = carregar_base(arquivo_local)
-    else:
-        st.error(
-            f"Arquivo '{ARQUIVO_PADRAO}' não encontrado. "
-            "Suba o Excel no mesmo repositório do app ou use o upload lateral."
-        )
-        st.stop()
-except Exception as e:
-    st.error(f"Erro ao carregar a base: {e}")
-    st.stop()
-
-colunas_necessarias = {"Visao", "Linha_PnL", "Produto", "Metrica", "Valor"}
-faltantes = colunas_necessarias - set(df.columns)
-if faltantes:
-    st.error(f"A aba {ABA_BASE} não contém as colunas esperadas: {', '.join(sorted(faltantes))}")
-    st.stop()
-
-visoes = sorted(df["Visao"].dropna().unique())
-produtos = sorted(df["Produto"].dropna().unique())
-metricas = sorted(df["Metrica"].dropna().unique())
-periodos = sorted(df["Periodo"].dropna().unique()) if "Periodo" in df.columns else []
-
-visao_sel = st.sidebar.selectbox("Visão", visoes, index=0 if "Mensal" not in visoes else visoes.index("Mensal"))
-produto_sel = st.sidebar.multiselect("Produto", produtos, default=produtos)
-metrica_sel = st.sidebar.multiselect("Métrica", metricas, default=[m for m in metricas if m in ["Realizado", "Orçado"]] or metricas)
-
-if periodos:
-    periodo_sel = st.sidebar.multiselect("Período", periodos, default=periodos)
+if upload is not None:
+    arquivo = upload
+elif arquivo_local.exists():
+    arquivo = arquivo_local
 else:
-    periodo_sel = []
+    st.error(f"Arquivo '{ARQUIVO_PADRAO}' não encontrado no repositório.")
+    st.stop()
 
-df_f = df[
-    (df["Visao"] == visao_sel)
-    & (df["Produto"].isin(produto_sel))
-    & (df["Metrica"].isin(metrica_sel))
-].copy()
+try:
+    df_resultado = carregar_resultado(arquivo)
+except Exception as erro:
+    st.error(f"Erro ao carregar a aba RESULTADO: {erro}")
+    st.stop()
 
-if periodos:
-    df_f = df_f[df_f["Periodo"].isin(periodo_sel)].copy()
-
-# ==========================
-# Header
-# ==========================
-
-st.markdown('<div class="title">Dashboard P&L 2026</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="subtitle">Base gerencial preparada para acompanhamento de realizado, orçado e variações.</div>',
-    unsafe_allow_html=True,
+periodos_disponiveis = (
+    df_resultado[["Data", "Período"]]
+    .drop_duplicates()
+    .sort_values("Data")
+    .reset_index(drop=True)
 )
 
-# ==========================
-# KPIs
-# ==========================
+periodo_padrao = len(periodos_disponiveis) - 1
+periodo_sel = st.sidebar.selectbox(
+    "Período dos cards",
+    periodos_disponiveis["Período"].tolist(),
+    index=periodo_padrao,
+)
 
-df_real = df_f[df_f["Metrica"].str.lower().eq("realizado")]
-df_orc = df_f[df_f["Metrica"].str.lower().isin(["orçado", "orcado"])]
+linhas_disponiveis = df_resultado[["Linha", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
+linhas_table_sel = st.sidebar.multiselect(
+    "Linhas da tabela",
+    linhas_disponiveis["Linha"].tolist(),
+    default=linhas_disponiveis["Linha"].tolist(),
+)
 
-linha_receita = escolher_linha(df, ["receita", "produto", "margem financeira"])
-linha_resultado = escolher_linha(df, ["resultado", "lucro", "ebitda"])
-linha_despesa = escolher_linha(df, ["despesa", "opex", "custo"])
+st.markdown('<div class="dash-title">Dashboard P&L 2026</div>', unsafe_allow_html=True)
+st.markdown('<div class="dash-subtitle">Resultados consolidados, evolução histórica e abertura por empresa.</div>', unsafe_allow_html=True)
 
-def valor_linha(base, linha):
-    if linha is None:
-        return 0
-    return base[base["Linha_PnL"] == linha]["Valor"].sum()
+tab_resultados, tab_pnl_mensal, tab_pnl_acum, tab_base = st.tabs(
+    ["Resultados", "P&L Mensal", "P&L Acumulado", "Base"]
+)
 
-receita_real = valor_linha(df_real, linha_receita)
-resultado_real = valor_linha(df_real, linha_resultado)
-despesa_real = valor_linha(df_real, linha_despesa)
-total_real = df_real["Valor"].sum()
-total_orc = df_orc["Valor"].sum()
-var_total = total_real - total_orc if len(df_orc) else 0
+with tab_resultados:
+    df_principais = montar_resultados_principais(df_resultado)
+    df_cards = df_principais[df_principais["Período"] == periodo_sel].copy()
 
-c1, c2, c3, c4, c5 = st.columns(5)
-with c1:
-    card("Receita / Produto", fmt_moeda(receita_real), linha_receita or "Realizado")
-with c2:
-    card("Resultado", fmt_moeda(resultado_real), linha_resultado or "Realizado")
-with c3:
-    card("Despesas / Custos", fmt_moeda(despesa_real), linha_despesa or "Realizado")
-with c4:
-    card("Total Realizado", fmt_moeda(total_real), visao_sel)
-with c5:
-    card("Var. vs Orçado", fmt_moeda(var_total), "Realizado - Orçado")
+    st.markdown('<div class="section-title">Principais resultados</div>', unsafe_allow_html=True)
 
-# ==========================
-# Abas
-# ==========================
+    c1, c2, c3, c4 = st.columns(4)
+    indicadores = [
+        "Resultado Conglomerado Financeiro",
+        "Resultado Coligadas",
+        "Resultado Conglomerado + Coligadas",
+        "Resultado Total",
+    ]
 
-tab1, tab2, tab3, tab4 = st.tabs(["Resumo Executivo", "P&L por Período", "Análise Detalhada", "Base"])
+    for coluna, indicador in zip([c1, c2, c3, c4], indicadores):
+        with coluna:
+            linha = df_cards[df_cards["Indicador"] == indicador]
+            valor = linha["Valor"].sum() if not linha.empty else 0
+            origem = linha["Linha"].iloc[0] if not linha.empty else "Linha não encontrada"
+            card(indicador, valor, f"{periodo_sel} • {origem}")
 
-with tab1:
-    st.markdown('<div class="section-title">Resultado por linha do P&L</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Evolução histórica dos resultados</div>', unsafe_allow_html=True)
 
-    resumo = (
-        df_f.groupby(["Linha_PnL", "Metrica"], as_index=False)["Valor"]
-        .sum()
-        .pivot(index="Linha_PnL", columns="Metrica", values="Valor")
-        .fillna(0)
-        .reset_index()
-    )
-
-    cols_valor = [c for c in resumo.columns if c != "Linha_PnL"]
-    for c in cols_valor:
-        resumo[c] = resumo[c].astype(float)
-
-    if {"Realizado", "Orçado"}.issubset(set(resumo.columns)):
-        resumo["Variação R$"] = resumo["Realizado"] - resumo["Orçado"]
-        resumo["Variação %"] = resumo.apply(
-            lambda r: (r["Variação R$"] / abs(r["Orçado"])) if r["Orçado"] else 0,
-            axis=1,
-        )
-
-    st.dataframe(resumo, use_container_width=True, hide_index=True)
-
-    st.markdown('<div class="section-title">Distribuição por produto</div>', unsafe_allow_html=True)
-    prod = df_real.groupby("Produto", as_index=False)["Valor"].sum()
-    if not prod.empty:
-        fig = px.bar(prod, x="Produto", y="Valor", text_auto=".2s")
-        fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="#080f1f",
-            plot_bgcolor="#080f1f",
-            margin=dict(l=10, r=10, t=20, b=10),
-            height=360,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-with tab2:
-    st.markdown('<div class="section-title">Evolução por período</div>', unsafe_allow_html=True)
-
-    if "Periodo" in df_f.columns and df_f["Periodo"].astype(str).str.len().gt(0).any():
-        evo = df_f.groupby(["Periodo", "Metrica"], as_index=False)["Valor"].sum()
-        fig = px.line(evo, x="Periodo", y="Valor", color="Metrica", markers=True)
-        fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="#080f1f",
-            plot_bgcolor="#080f1f",
-            margin=dict(l=10, r=10, t=20, b=10),
-            height=420,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    if df_principais.empty:
+        st.warning("Não encontrei as linhas principais na aba RESULTADO. Verifique os nomes das linhas na planilha.")
     else:
-        st.info("A coluna Período não possui valores suficientes para montar a evolução.")
+        fig = px.line(
+            df_principais.sort_values("Data"),
+            x="Data",
+            y="Valor",
+            color="Indicador",
+            markers=True,
+            labels={"Data": "Mês", "Valor": "Resultado", "Indicador": "Resultado"},
+        )
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#080f1f",
+            plot_bgcolor="#080f1f",
+            height=430,
+            margin=dict(l=10, r=10, t=10, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+        fig.update_xaxes(tickformat="%b/%Y")
+        fig.update_yaxes(tickprefix="R$ ", separatethousands=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-with tab3:
-    st.markdown('<div class="section-title">Detalhamento da base filtrada</div>', unsafe_allow_html=True)
-    st.dataframe(df_f, use_container_width=True, hide_index=True)
+    st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
-    csv = df_f.to_csv(index=False, sep=";").encode("utf-8-sig")
-    st.download_button(
-        "Baixar base filtrada em CSV",
-        data=csv,
-        file_name="base_pnl_filtrada.csv",
-        mime="text/csv",
-    )
+    df_tabela = df_resultado[df_resultado["Linha"].isin(linhas_table_sel)].copy()
+    tabela = tabela_resultado_aberto(df_tabela)
+    tabela_formatada = tabela.copy()
 
-with tab4:
-    st.markdown('<div class="section-title">Informações da base</div>', unsafe_allow_html=True)
+    for col in tabela_formatada.columns:
+        if col != "Linha":
+            tabela_formatada[col] = tabela_formatada[col].map(formatar_numero)
+
+    st.dataframe(tabela_formatada, use_container_width=True, hide_index=True)
+
+with tab_pnl_mensal:
+    try:
+        df_base = carregar_base_dash(arquivo)
+        df_mensal = df_base[df_base["Visao"].str.lower().eq("mensal")].copy()
+        st.markdown('<div class="section-title">P&L Mensal</div>', unsafe_allow_html=True)
+        st.dataframe(df_mensal, use_container_width=True, hide_index=True)
+    except Exception as erro:
+        st.info(f"Não consegui carregar a aba BASE_DASH para P&L Mensal: {erro}")
+
+with tab_pnl_acum:
+    try:
+        df_base = carregar_base_dash(arquivo)
+        df_acum = df_base[df_base["Visao"].str.lower().eq("acumulado")].copy()
+        st.markdown('<div class="section-title">P&L Acumulado</div>', unsafe_allow_html=True)
+        st.dataframe(df_acum, use_container_width=True, hide_index=True)
+    except Exception as erro:
+        st.info(f"Não consegui carregar a aba BASE_DASH para P&L Acumulado: {erro}")
+
+with tab_base:
+    st.markdown('<div class="section-title">Base lida da aba RESULTADO</div>', unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div class="info-box">
-            Linhas carregadas: <b>{len(df):,}</b><br>
-            Linhas após filtros: <b>{len(df_f):,}</b><br>
-            Aba usada: <b>{ABA_BASE}</b><br>
-            Arquivo padrão: <b>{ARQUIVO_PADRAO}</b>
+        <div class="note-box">
+            Linhas lidas: <b>{len(df_resultado):,}</b><br>
+            Períodos encontrados: <b>{", ".join(periodos_disponiveis["Período"].tolist())}</b><br>
+            Aba principal: <b>{ABA_RESULTADO}</b>
         </div>
         """.replace(",", "."),
         unsafe_allow_html=True,
     )
-    st.dataframe(df.head(200), use_container_width=True, hide_index=True)
+    st.dataframe(df_resultado.drop(columns=["Linha_Normalizada", "Ordem"], errors="ignore"), use_container_width=True, hide_index=True)
