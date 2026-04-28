@@ -1566,25 +1566,37 @@ with tab_resultados:
                 x="Data",
                 y="Valor",
                 color="Indicador",
-                text="Rótulo",
                 markers=True,
                 line_shape="spline",
                 labels={"Data": "Mês", "Valor": "Resultado", "Indicador": "Resultado"},
             )
 
-            posicoes_rotulo = {
-                "Resultado Total": "top center",
-                "Resultado Conglomerado + Coligadas": "bottom center",
-                "Resultado Conglomerado Financeiro": "top right",
-                "Resultado Coligadas": "bottom right",
-            }
-
             for trace in fig.data:
                 trace.update(
-                    mode="lines+markers+text",
-                    textposition=posicoes_rotulo.get(trace.name, "top center"),
-                    textfont=dict(size=14, family="Arial Black"),
+                    mode="lines+markers",
                     cliponaxis=False,
+                )
+
+            offsets_rotulo = {
+                "Resultado Total": {"xshift": 22, "yshift": 20},
+                "Resultado Conglomerado + Coligadas": {"xshift": 22, "yshift": -20},
+                "Resultado Conglomerado Financeiro": {"xshift": 18, "yshift": 14},
+                "Resultado Coligadas": {"xshift": 18, "yshift": -16},
+            }
+
+            for _, row in base_linhas.iterrows():
+                desloc = offsets_rotulo.get(row["Indicador"], {"xshift": 18, "yshift": 18})
+                fig.add_annotation(
+                    x=row["Data"],
+                    y=row["Valor"],
+                    text=f"<b>{row['Rótulo']}</b>",
+                    showarrow=False,
+                    xshift=desloc["xshift"],
+                    yshift=desloc["yshift"],
+                    font=dict(size=16, color="#FFFFFF", family="Arial Black"),
+                    xanchor="left",
+                    align="left",
+                    bgcolor="rgba(0,0,0,0)",
                 )
 
             tick_datas = periodos_disponiveis["Data"].tolist()
@@ -1592,17 +1604,17 @@ with tab_resultados:
 
             y_min = base_linhas["Valor"].min()
             y_max = base_linhas["Valor"].max()
-            y_pad = max((y_max - y_min) * 0.18, 1)
+            y_pad = max((y_max - y_min) * 0.24, 1)
 
             x_min = min(tick_datas) - pd.DateOffset(days=8)
-            x_max = max(tick_datas) + pd.DateOffset(days=16)
+            x_max = max(tick_datas) + pd.DateOffset(days=20)
 
             fig.update_layout(
                 template="plotly_dark",
                 paper_bgcolor="#080f1f",
                 plot_bgcolor="#080f1f",
                 height=500,
-                margin=dict(l=10, r=95, t=35, b=20),
+                margin=dict(l=10, r=130, t=35, b=20),
                 legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
             )
             fig.update_xaxes(
