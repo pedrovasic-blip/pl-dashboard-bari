@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 
@@ -1299,41 +1298,18 @@ with tab_pnl_mensal:
             & (df_pnl["Métrica"] == "Realizado")
         ].copy()
 
-        base_produtos = base_produtos.sort_values("Produto")
-        x_produtos = base_produtos["Produto"].tolist()
-        y_final = base_produtos["Valor"].tolist()
-        texto_final = [formatar_moeda(v).replace("R$ ", "") for v in y_final]
-
-        steps_animacao = 18
-        frames = []
-        for step in range(1, steps_animacao + 1):
-            fator = step / steps_animacao
-            frames.append(
-                go.Frame(
-                    data=[
-                        go.Bar(
-                            x=x_produtos,
-                            y=[v * fator for v in y_final],
-                            text=texto_final if step == steps_animacao else [""] * len(y_final),
-                            textposition="inside",
-                        )
-                    ],
-                    name=str(step),
-                )
-            )
-
-        fig_prod = go.Figure(
-            data=[
-                go.Bar(
-                    x=x_produtos,
-                    y=[0 for _ in y_final],
-                    text=[""] * len(y_final),
-                    textposition="inside",
-                )
-            ],
-            frames=frames,
+        fig_prod = px.bar(
+            base_produtos,
+            x="Produto",
+            y="Valor",
+            text=base_produtos["Valor"].map(lambda v: formatar_moeda(v).replace("R$ ", "")),
+            labels={"Valor": "Realizado", "Produto": ""},
         )
-
+        fig_prod.update_traces(
+            textposition="inside",
+            textfont=dict(size=18, family="Arial Black"),
+            insidetextanchor="middle",
+        )
         fig_prod.update_layout(
             template="plotly_dark",
             paper_bgcolor="#080f1f",
@@ -1341,39 +1317,9 @@ with tab_pnl_mensal:
             height=390,
             margin=dict(l=10, r=10, t=10, b=10),
             showlegend=False,
-            yaxis_title="Realizado",
-            xaxis_title="",
-            updatemenus=[
-                {
-                    "type": "buttons",
-                    "showactive": False,
-                    "x": 0.02,
-                    "y": 1.12,
-                    "buttons": [
-                        {
-                            "label": "Animar",
-                            "method": "animate",
-                            "args": [
-                                None,
-                                {
-                                    "frame": {"duration": 45, "redraw": True},
-                                    "fromcurrent": True,
-                                    "transition": {"duration": 20},
-                                },
-                            ],
-                        }
-                    ],
-                }
-            ],
         )
         fig_prod.update_xaxes(showgrid=False, zeroline=False)
-        fig_prod.update_yaxes(
-            showgrid=False,
-            zeroline=False,
-            tickprefix="R$ ",
-            separatethousands=True,
-            range=[0, max(y_final) * 1.18 if y_final else 1],
-        )
+        fig_prod.update_yaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
         st.plotly_chart(fig_prod, use_container_width=True)
 
         st.markdown('<div class="section-title">Resumo das linhas principais por produto</div>', unsafe_allow_html=True)
