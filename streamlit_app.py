@@ -44,6 +44,43 @@ CSS = """
     .kpi-label { color: #9fb2df; font-size: .78rem; margin-bottom: 10px; }
     .kpi-value { color: #ffffff; font-size: 1.65rem; font-weight: 850; line-height: 1.15; }
     .kpi-help { color: #60759f; font-size: .72rem; margin-top: 9px; }
+    .side-card {
+        background: #111a2e;
+        border: 1px solid #243150;
+        border-radius: 16px;
+        padding: 22px 20px;
+        min-height: 245px;
+        box-shadow: 0 10px 26px rgba(0,0,0,.20);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        margin-top: 10px;
+    }
+    .side-card-label {
+        color: #9fb2df;
+        font-size: .86rem;
+        font-weight: 700;
+        margin-bottom: 12px;
+    }
+    .side-card-value {
+        color: #ffffff;
+        font-size: 2.05rem;
+        font-weight: 900;
+        line-height: 1.1;
+    }
+    .side-card-delta {
+        font-size: 1.25rem;
+        font-weight: 900;
+        margin-top: 12px;
+    }
+    .side-card-help {
+        color: #60759f;
+        font-size: .78rem;
+        margin-top: 12px;
+        line-height: 1.25;
+    }
     .kpi-delta {
         font-size: .88rem;
         font-weight: 800;
@@ -500,6 +537,68 @@ def variacao_mes_anterior(df_principais, indicador, periodo_atual, periodo_ant):
     return (valor_atual - valor_ant) / abs(valor_ant)
 
 
+def variacao_resultado_total_inicio_ano(df_principais, periodo_atual):
+    linha_atual = df_principais[
+        (df_principais["Indicador"] == "Resultado Total")
+        & (df_principais["Período"] == periodo_atual)
+    ]
+
+    if linha_atual.empty:
+        return None, None, None
+
+    data_atual = linha_atual["Data"].iloc[0]
+    ano_atual = pd.Timestamp(data_atual).year
+    data_inicio = pd.Timestamp(ano_atual, 1, 1)
+
+    valor_atual = linha_atual["Valor"].sum()
+
+    linha_inicio = df_principais[
+        (df_principais["Indicador"] == "Resultado Total")
+        & (df_principais["Data"] == data_inicio)
+    ]
+
+    if linha_inicio.empty:
+        return valor_atual, None, None
+
+    valor_inicio = linha_inicio["Valor"].sum()
+
+    if valor_inicio == 0:
+        return valor_atual, None, valor_inicio
+
+    variacao = (valor_atual - valor_inicio) / abs(valor_inicio)
+    return valor_atual, variacao, valor_inicio
+
+
+def card_variacao_inicio_ano(valor_atual, variacao, valor_inicio, periodo_atual):
+    if valor_atual is None:
+        valor_html = "N/D"
+        delta_html = '<div class="side-card-delta delta-neutral">N/D</div>'
+        ajuda = "Resultado Total não encontrado"
+    else:
+        valor_html = formatar_moeda(valor_atual)
+        if variacao is None:
+            delta_html = '<div class="side-card-delta delta-neutral">N/D</div>'
+        else:
+            delta_html = f'<div class="side-card-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
+
+        if valor_inicio is None:
+            ajuda = f"{periodo_atual} • sem base em jan/2026"
+        else:
+            ajuda = f"{periodo_atual} comparado a jan/2026"
+
+    st.markdown(
+        f"""
+        <div class="side-card">
+            <div class="side-card-label">Variação do Resultado Total desde o início de 2026</div>
+            <div class="side-card-value">{valor_html}</div>
+            {delta_html}
+            <div class="side-card-help">{ajuda}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def adicionar_coluna_variacao_tabela(tabela, periodos_df, periodo_atual):
     coluna_delta = "Δ mês anterior"
     tabela = tabela.copy()
@@ -664,39 +763,48 @@ with tab_resultados:
     if df_principais.empty:
         st.warning("Não encontrei as linhas principais na aba RESULTADO. Verifique os nomes das linhas na planilha.")
     else:
-        fig = px.line(
-            df_principais.sort_values("Data"),
-            x="Data",
-            y="Valor",
-            color="Indicador",
-            markers=True,
-            line_shape="spline",
-            labels={"Data": "Mês", "Valor": "Resultado", "Indicador": "Resultado"},
-        )
-        tick_datas = periodos_disponiveis["Data"].tolist()
-        tick_textos = periodos_disponiveis["Período"].tolist()
-        fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="#080f1f",
-            plot_bgcolor="#080f1f",
-            height=430,
-            margin=dict(l=10, r=10, t=10, b=10),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        )
-        fig.update_xaxes(
-            tickmode="array",
-            tickvals=tick_datas,
-            ticktext=tick_textos,
-            showgrid=False,
-            zeroline=False,
-        )
-        fig.update_yaxes(
-            tickprefix="R$ ",
-            separatethousands=True,
-            showgrid=False,
-            zeroline=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        col_grafico, col_card_variacao = st.columns([3.4, 1])
+
+        with col_grafico:
+            fig = px.line(
+                df_principais.sort_values("Data"),
+                x="Data",
+                y="Valor",
+                color="Indicador",
+                markers=True,
+                line_shape="spline",
+                labels={"Data": "Mês", "Valor": "Resultado", "Indicador": "Resultado"},
+            )
+            tick_datas = periodos_disponiveis["Data"].tolist()
+            tick_textos = periodos_disponiveis["Período"].tolist()
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#080f1f",
+                plot_bgcolor="#080f1f",
+                height=430,
+                margin=dict(l=10, r=10, t=10, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            fig.update_xaxes(
+                tickmode="array",
+                tickvals=tick_datas,
+                ticktext=tick_textos,
+                showgrid=False,
+                zeroline=False,
+            )
+            fig.update_yaxes(
+                tickprefix="R$ ",
+                separatethousands=True,
+                showgrid=False,
+                zeroline=False,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_card_variacao:
+            valor_total_atual, variacao_total_ano, valor_total_inicio = variacao_resultado_total_inicio_ano(
+                df_principais, periodo_sel
+            )
+            card_variacao_inicio_ano(valor_total_atual, variacao_total_ano, valor_total_inicio, periodo_sel)
 
     st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
