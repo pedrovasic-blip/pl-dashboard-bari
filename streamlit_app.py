@@ -76,7 +76,7 @@ CSS = """
         text-align: left;
         color: #ffffff;
         font-weight: 850;
-        min-width: 250px;
+        min-width: 310px;
     }
     table.pnl-matrix tbody tr.main-line td {
         background: #162338;
@@ -296,6 +296,27 @@ def formatar_moeda(valor):
         texto = f"{sinal}R$ {valor_abs / 1_000:,.1f} mil"
     else:
         texto = f"{sinal}R$ {valor_abs:,.2f}"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def formatar_moeda_curta(valor):
+    try:
+        valor = float(valor)
+    except Exception:
+        return ""
+
+    sinal = "-" if valor < 0 else ""
+    valor_abs = abs(valor)
+
+    if valor_abs >= 1_000_000_000:
+        texto = f"{sinal}R$ {valor_abs / 1_000_000_000:,.1f} bi"
+    elif valor_abs >= 1_000_000:
+        texto = f"{sinal}R$ {valor_abs / 1_000_000:,.1f} mi"
+    elif valor_abs >= 1_000:
+        texto = f"{sinal}R$ {valor_abs / 1_000:,.0f} mil"
+    else:
+        texto = f"{sinal}R$ {valor_abs:,.0f}"
+
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -718,6 +739,19 @@ def carregar_pnl_mensal(arquivo):
 
     return df
 
+def obter_linhas_tabela_pnl(df_pnl):
+    if df_pnl.empty:
+        return []
+
+    linhas = (
+        df_pnl[["Linha", "Ordem_Linha"]]
+        .drop_duplicates()
+        .sort_values("Ordem_Linha")
+    )
+
+    return linhas["Linha"].tolist()
+
+
 def obter_linhas_principais_pnl(df_pnl):
     linhas_desejadas = [
         "RECEITAS",
@@ -1038,7 +1072,8 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
     st.plotly_chart(fig_prod, use_container_width=True)
 
     st.markdown(f'<div class="section-title">{titulo_tabela}</div>', unsafe_allow_html=True)
-    matriz_pnl, produtos_matriz, metricas_matriz = montar_matriz_pnl_excel(df_pnl, linhas_principais)
+    linhas_tabela = obter_linhas_tabela_pnl(df_pnl)
+    matriz_pnl, produtos_matriz, metricas_matriz = montar_matriz_pnl_excel(df_pnl, linhas_tabela)
     st.markdown(
         tabela_html_pnl_matriz(matriz_pnl, produtos_matriz, metricas_matriz),
         unsafe_allow_html=True,
@@ -1339,27 +1374,16 @@ def resultado_total_acumulado_ano(df_principais, periodo_atual):
 def card_resultado_total_acumulado(valor_acumulado, variacao, valor_acumulado_anterior, periodo_atual):
     if valor_acumulado is None:
         valor_html = "N/D"
-        delta_html = '<div class="side-card-delta delta-neutral">N/D</div>'
         ajuda = "Resultado Total não encontrado"
     else:
         valor_html = formatar_moeda(valor_acumulado)
-
-        if variacao is None:
-            delta_html = '<div class="side-card-delta delta-neutral">N/D</div>'
-        else:
-            delta_html = f'<div class="side-card-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
-
-        if valor_acumulado_anterior is None:
-            ajuda = f"Acumulado de jan/2026 até {periodo_atual}"
-        else:
-            ajuda = f"Acumulado de jan/2026 até {periodo_atual}"
+        ajuda = f"Acumulado de jan/2026 até {periodo_atual}"
 
     st.markdown(
         f"""
         <div class="side-card">
             <div class="side-card-label">Resultado Total acumulado em 2026</div>
             <div class="side-card-value">{valor_html}</div>
-            {delta_html}
             <div class="side-card-help">{ajuda}</div>
         </div>
         """,
@@ -1534,24 +1558,44 @@ with tab_resultados:
         col_grafico, col_card_variacao = st.columns([3.4, 1])
 
         with col_grafico:
+            base_linhas = df_principais.sort_values(["Indicador", "Data"]).copy()
+            base_linhas["Rótulo"] = base_linhas["Valor"].map(formatar_moeda_curta)
+
             fig = px.line(
-                df_principais.sort_values("Data"),
+                base_linhas,
                 x="Data",
                 y="Valor",
                 color="Indicador",
+                text="Rótulo",
                 markers=True,
                 line_shape="spline",
                 labels={"Data": "Mês", "Valor": "Resultado", "Indicador": "Resultado"},
             )
+
+            posicoes_rotulo = {
+                "Resultado Total": "top center",
+                "Resultado Conglomerado + Coligadas": "bottom center",
+                "Resultado Conglomerado Financeiro": "top right",
+                "Resultado Coligadas": "bottom right",
+            }
+
+            for trace in fig.data:
+                trace.update(
+                    mode="lines+markers+text",
+                    textposition=posicoes_rotulo.get(trace.name, "top center"),
+                    textfont=dict(size=11),
+                    cliponaxis=False,
+                )
+
             tick_datas = periodos_disponiveis["Data"].tolist()
             tick_textos = periodos_disponiveis["Período"].tolist()
             fig.update_layout(
                 template="plotly_dark",
                 paper_bgcolor="#080f1f",
                 plot_bgcolor="#080f1f",
-                height=430,
-                margin=dict(l=10, r=10, t=10, b=10),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                height=470,
+                margin=dict(l=10, r=30, t=20, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="left", x=0),
             )
             fig.update_xaxes(
                 tickmode="array",
