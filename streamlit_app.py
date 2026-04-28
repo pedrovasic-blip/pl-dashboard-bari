@@ -1502,15 +1502,13 @@ def card_composicao_resultado_total_acumulado(df_principais, periodo_atual):
     total, itens = composicao_resultado_total_acumulado(df_principais, periodo_atual)
 
     if total is None or not itens:
-        st.markdown(
-            """
-            <div class="side-card composition-card">
-                <div class="composition-title">Composição do Resultado Total acumulado</div>
-                <div class="composition-help">Não foi possível calcular a composição para o período selecionado.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        html = (
+            '<div class="side-card composition-card">'
+            '<div class="composition-title">Composição do Resultado Total acumulado</div>'
+            '<div class="composition-help">Não foi possível calcular a composição para o período selecionado.</div>'
+            '</div>'
         )
+        st.markdown(html, unsafe_allow_html=True)
         return
 
     max_pct = max((abs(item["pct"]) for item in itens if item["pct"] is not None), default=0)
@@ -1519,35 +1517,31 @@ def card_composicao_resultado_total_acumulado(df_principais, periodo_atual):
         pct = item["pct"] if item["pct"] is not None else 0.0
         pct_texto = f"{pct * 100:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
         largura = 0 if max_pct == 0 else max(6, abs(pct) / max_pct * 100)
-        html_rows.append(
-            f"""
-            <div class="composition-row">
-                <div class="composition-head">
-                    <div class="composition-name">{item['nome']}</div>
-                    <div style="display:flex; gap:8px; align-items:baseline;">
-                        <div class="composition-value">{formatar_moeda(item['valor'])}</div>
-                        <div class="composition-pct">{pct_texto}</div>
-                    </div>
-                </div>
-                <div class="composition-bar-wrap">
-                    <div class="composition-bar-fill" style="width:{largura:.1f}%"></div>
-                </div>
-            </div>
-            """
+        row_html = (
+            '<div class="composition-row">'
+            '<div class="composition-head">'
+            f'<div class="composition-name">{item["nome"]}</div>'
+            '<div style="display:flex; gap:8px; align-items:baseline;">'
+            f'<div class="composition-value">{formatar_moeda(item["valor"])}</div>'
+            f'<div class="composition-pct">{pct_texto}</div>'
+            '</div>'
+            '</div>'
+            '<div class="composition-bar-wrap">'
+            f'<div class="composition-bar-fill" style="width:{largura:.1f}%"></div>'
+            '</div>'
+            '</div>'
         )
+        html_rows.append(row_html)
 
     ajuda = f"Composição do acumulado de jan/2026 até {periodo_atual}"
-    st.markdown(
-        f"""
-        <div class="side-card composition-card">
-            <div class="composition-title">Composição do Resultado Total acumulado</div>
-            {''.join(html_rows)}
-            <div class="composition-help">{ajuda}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    html = (
+        '<div class="side-card composition-card">'
+        '<div class="composition-title">Composição do Resultado Total acumulado</div>'
+        + ''.join(html_rows)
+        + f'<div class="composition-help">{ajuda}</div>'
+        + '</div>'
     )
-
+    st.markdown(html, unsafe_allow_html=True)
 
 def adicionar_coluna_variacao_tabela(tabela, periodos_df, periodo_atual):
     coluna_delta = "Δ mês anterior"
