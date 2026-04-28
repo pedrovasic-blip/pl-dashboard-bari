@@ -17,6 +17,7 @@ st.set_page_config(
 ARQUIVO_PADRAO = "2026_03_PL_com_BASE_DASH_v2.xlsx"
 ABA_RESULTADO = "RESULTADO"
 ABA_BASE = "BASE_DASH"
+DATA_MINIMA_DASH = pd.Timestamp(2026, 1, 1)
 
 CSS = """
 <style>
@@ -170,7 +171,6 @@ def card(titulo, valor, ajuda):
 
 @st.cache_data(show_spinner=False)
 def carregar_resultado(arquivo):
-    # Mantém os índices reais das colunas. Isso é importante porque a aba RESULTADO tem colunas ocultas/vazias.
     bruto = pd.read_excel(arquivo, sheet_name=ABA_RESULTADO, header=None, engine="openpyxl")
     bruto = bruto.dropna(how="all")
 
@@ -233,10 +233,13 @@ def carregar_resultado(arquivo):
     df = pd.DataFrame(registros)
 
     if df.empty:
-        raise ValueError(
-            "A aba RESULTADO foi encontrada, mas nenhum valor numérico foi lido. "
-            "Verifique se os meses estão na mesma linha do cabeçalho 'Mês'."
-        )
+        raise ValueError("A aba RESULTADO foi encontrada, mas nenhum valor numérico foi lido.")
+
+    # Filtro global solicitado: mostrar apenas janeiro/2026 em diante.
+    df = df[df["Data"] >= DATA_MINIMA_DASH].copy()
+
+    if df.empty:
+        raise ValueError("A aba RESULTADO não possui dados a partir de janeiro/2026.")
 
     return df
 
@@ -253,8 +256,13 @@ def carregar_base_dash(arquivo):
     return df
 
 
-def achar_linha(df, termos):
+def achar_linha_exata_ou_contendo(df, termos):
     linhas = df[["Linha", "Linha_Normalizada", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
+    for termo in termos:
+        termo_norm = normalizar_texto(termo)
+        exato = linhas[linhas["Linha_Normalizada"].eq(termo_norm)]
+        if not exato.empty:
+            return exato.iloc[0]["Linha"]
     for termo in termos:
         termo_norm = normalizar_texto(termo)
         encontrado = linhas[linhas["Linha_Normalizada"].str.contains(termo_norm, regex=False, na=False)]
@@ -272,7 +280,7 @@ def montar_resultados_principais(df):
     ]
     mapeamento = []
     for titulo, termos in specs:
-        linha = achar_linha(df, termos)
+        linha = achar_linha_exata_ou_contendo(df, termos)
         if linha:
             mapeamento.append({"Indicador": titulo, "Linha": linha})
 
@@ -283,13 +291,23 @@ def montar_resultados_principais(df):
     return df.merge(mapa, on="Linha", how="inner")
 
 
-def tabela_resultado_aberto(df):
-    ordem = df[["Linha", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
-    tab = df.pivot_table(index="Linha", columns="Período", values="Valor", aggfunc="sum")
-    datas_ordem = df[["Período", "Data"]].drop_duplicates().sort_values("Data")
+def montar_tabela_resultado_total(df):
+    # Pedido: retirar resultados de conglomerado e coligadas da tabela e deixar somente o Resultado Total.
+    linha_total = achar_linha_exata_ou_contendo(df, ["res total", "resultado total"])
+    if linha_total is None:
+        return pd.DataFrame({"Linha": ["Resultado Total não encontrado"]})
+
+    df_total = df[df["Linha"].eq(linha_total)].copy()
+
+    datas_ordem = df_total[["Período", "Data"]].drop_duplicates().sort_values("Data")
     colunas = datas_ordem["Período"].tolist()
-    tab = tab.reindex(ordem["Linha"]).reindex(columns=colunas).reset_index()
-    return tab
+
+    tabela = (
+        df_total.pivot_table(index="Linha", columns="Período", values="Valor", aggfunc="sum")
+        .reindex(columns=colunas)
+        .reset_index()
+    )
+    return tabela
 
 
 st.sidebar.title("Filtros")
@@ -324,15 +342,17 @@ periodo_sel = st.sidebar.selectbox(
     index=periodo_padrao,
 )
 
-linhas_disponiveis = df_resultado[["Linha", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
-linhas_table_sel = st.sidebar.multiselect(
-    "Linhas da tabela",
-    linhas_disponiveis["Linha"].tolist(),
-    default=linhas_disponiveis["Linha"].tolist(),
+st.sidebar.markdown(
+    """
+    <div class="note-box">
+        Exibindo somente dados a partir de <b>jan/2026</b>.
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 st.markdown('<div class="dash-title">Dashboard P&L 2026</div>', unsafe_allow_html=True)
-st.markdown('<div class="dash-subtitle">Resultados consolidados, evolução histórica e abertura por empresa.</div>', unsafe_allow_html=True)
+st.markdown('<div class="dash-subtitle">Resultados consolidados, evolução histórica e Resultado Total.</div>', unsafe_allow_html=True)
 
 tab_resultados, tab_pnl_mensal, tab_pnl_acum, tab_base = st.tabs(
     ["Resultados", "P&L Mensal", "P&L Acumulado", "Base"]
@@ -384,10 +404,9 @@ with tab_resultados:
         fig.update_yaxes(tickprefix="R$ ", separatethousands=True)
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Resultado Total</div>', unsafe_allow_html=True)
 
-    df_tabela = df_resultado[df_resultado["Linha"].isin(linhas_table_sel)].copy()
-    tabela = tabela_resultado_aberto(df_tabela)
+    tabela = montar_tabela_resultado_total(df_resultado)
     tabela_formatada = tabela.copy()
 
     for col in tabela_formatada.columns:
@@ -421,6 +440,7 @@ with tab_base:
         <div class="note-box">
             Linhas lidas: <b>{len(df_resultado):,}</b><br>
             Períodos encontrados: <b>{", ".join(periodos_disponiveis["Período"].tolist())}</b><br>
+            Filtro aplicado: <b>jan/2026 em diante</b><br>
             Aba principal: <b>{ABA_RESULTADO}</b>
         </div>
         """.replace(",", "."),
