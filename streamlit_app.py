@@ -235,7 +235,6 @@ def carregar_resultado(arquivo):
     if df.empty:
         raise ValueError("A aba RESULTADO foi encontrada, mas nenhum valor numérico foi lido.")
 
-    # Filtro global solicitado: mostrar apenas janeiro/2026 em diante.
     df = df[df["Data"] >= DATA_MINIMA_DASH].copy()
 
     if df.empty:
@@ -291,19 +290,53 @@ def montar_resultados_principais(df):
     return df.merge(mapa, on="Linha", how="inner")
 
 
-def montar_tabela_resultado_total(df):
-    # Pedido: retirar resultados de conglomerado e coligadas da tabela e deixar somente o Resultado Total.
+def montar_tabela_empresas_e_total(df):
+    """
+    Pedido: retirar os resultados intermediários de conglomerado/coligadas e manter:
+    - linhas de empresas/aberturas;
+    - Resultado Total.
+    Exclui linhas que são totais intermediários ou subtotais de grupos.
+    """
+    excluir_exatos = {
+        "resultado congl financeiro",
+        "resultado conglomerado financeiro",
+        "resultado coligadas",
+        "resultado congl coligadas",
+        "resultado conglomerado coligadas",
+        "resultado conglomerado coligadas",
+    }
+
+    excluir_contem = [
+        "resultado congl financeiro",
+        "resultado conglomerado financeiro",
+        "resultado coligadas",
+        "resultado congl coligadas",
+        "resultado conglomerado coligadas",
+    ]
+
     linha_total = achar_linha_exata_ou_contendo(df, ["res total", "resultado total"])
-    if linha_total is None:
-        return pd.DataFrame({"Linha": ["Resultado Total não encontrado"]})
 
-    df_total = df[df["Linha"].eq(linha_total)].copy()
+    linhas = df[["Linha", "Linha_Normalizada", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha").copy()
 
-    datas_ordem = df_total[["Período", "Data"]].drop_duplicates().sort_values("Data")
+    def manter(row):
+        nome = row["Linha_Normalizada"]
+        if linha_total is not None and row["Linha"] == linha_total:
+            return True
+        if nome in excluir_exatos:
+            return False
+        if any(term in nome for term in excluir_contem):
+            return False
+        return True
+
+    linhas_filtradas = linhas[linhas.apply(manter, axis=1)]["Linha"].tolist()
+    df_tabela = df[df["Linha"].isin(linhas_filtradas)].copy()
+
+    datas_ordem = df_tabela[["Período", "Data"]].drop_duplicates().sort_values("Data")
     colunas = datas_ordem["Período"].tolist()
 
     tabela = (
-        df_total.pivot_table(index="Linha", columns="Período", values="Valor", aggfunc="sum")
+        df_tabela.pivot_table(index="Linha", columns="Período", values="Valor", aggfunc="sum")
+        .reindex(index=linhas_filtradas)
         .reindex(columns=colunas)
         .reset_index()
     )
@@ -352,7 +385,7 @@ st.sidebar.markdown(
 )
 
 st.markdown('<div class="dash-title">Dashboard P&L 2026</div>', unsafe_allow_html=True)
-st.markdown('<div class="dash-subtitle">Resultados consolidados, evolução histórica e Resultado Total.</div>', unsafe_allow_html=True)
+st.markdown('<div class="dash-subtitle">Resultados consolidados, evolução histórica e abertura por empresa.</div>', unsafe_allow_html=True)
 
 tab_resultados, tab_pnl_mensal, tab_pnl_acum, tab_base = st.tabs(
     ["Resultados", "P&L Mensal", "P&L Acumulado", "Base"]
@@ -392,6 +425,8 @@ with tab_resultados:
             markers=True,
             labels={"Data": "Mês", "Valor": "Resultado", "Indicador": "Resultado"},
         )
+        tick_datas = periodos_disponiveis["Data"].tolist()
+        tick_textos = periodos_disponiveis["Período"].tolist()
         fig.update_layout(
             template="plotly_dark",
             paper_bgcolor="#080f1f",
@@ -400,13 +435,13 @@ with tab_resultados:
             margin=dict(l=10, r=10, t=10, b=10),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         )
-        fig.update_xaxes(tickformat="%b/%Y")
+        fig.update_xaxes(tickmode="array", tickvals=tick_datas, ticktext=tick_textos)
         fig.update_yaxes(tickprefix="R$ ", separatethousands=True)
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown('<div class="section-title">Resultado Total</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
-    tabela = montar_tabela_resultado_total(df_resultado)
+    tabela = montar_tabela_empresas_e_total(df_resultado)
     tabela_formatada = tabela.copy()
 
     for col in tabela_formatada.columns:
