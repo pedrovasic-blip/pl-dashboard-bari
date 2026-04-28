@@ -467,6 +467,215 @@ def carregar_base_dash(arquivo):
     return df
 
 
+
+@st.cache_data(show_spinner=False)
+def carregar_pnl_mensal(arquivo):
+    bruto = pd.read_excel(arquivo, sheet_name="P&L Mensal", header=None, engine="openpyxl")
+    bruto = bruto.dropna(how="all")
+
+    linha_produto = None
+    produtos_encontrados = {}
+
+    for idx in bruto.index:
+        for col in bruto.columns:
+            texto = normalizar_texto(bruto.loc[idx, col])
+            if texto in ["consignado", "imobiliario", "total"]:
+                nome = {
+                    "consignado": "Consignado",
+                    "imobiliario": "Imobiliário",
+                    "total": "Total",
+                }[texto]
+                produtos_encontrados[nome] = col
+
+        if {"Consignado", "Imobiliário", "Total"}.issubset(set(produtos_encontrados.keys())):
+            linha_produto = idx
+            break
+
+    if linha_produto is None:
+        raise ValueError("Não encontrei os blocos Consignado, Imobiliário e Total na aba P&L Mensal.")
+
+    linha_metrica = linha_produto + 1
+    col_rotulo = min(produtos_encontrados.values()) - 1
+
+    produtos_ordenados = sorted(produtos_encontrados.items(), key=lambda x: x[1])
+    blocos = []
+
+    for i, (produto, col_inicio) in enumerate(produtos_ordenados):
+        col_fim = produtos_ordenados[i + 1][1] if i + 1 < len(produtos_ordenados) else max(bruto.columns) + 1
+
+        for col in range(col_inicio, col_fim):
+            metrica_norm = normalizar_texto(bruto.loc[linha_metrica, col]) if col in bruto.columns else ""
+
+            if metrica_norm == "realizado":
+                metrica = "Realizado"
+            elif metrica_norm == "orcado":
+                metrica = "Orçado"
+            elif metrica_norm in ["", "nan"]:
+                continue
+            elif "r" in metrica_norm and ("delta" in metrica_norm or metrica_norm == "r"):
+                metrica = "Δ R$"
+            elif "%" in str(bruto.loc[linha_metrica, col]) or "delta" in metrica_norm or metrica_norm in ["", ""]:
+                metrica = "Δ %"
+            else:
+                metrica = str(bruto.loc[linha_metrica, col]).strip()
+
+            blocos.append({"Produto": produto, "Coluna": col, "Métrica": metrica})
+
+    registros = []
+    ordem = 0
+
+    for idx in bruto.index:
+        if idx <= linha_metrica:
+            continue
+
+        linha_nome = bruto.loc[idx, col_rotulo] if col_rotulo in bruto.columns else None
+        if pd.isna(linha_nome) or str(linha_nome).strip() == "":
+            continue
+
+        linha_tem_valor = False
+
+        for bloco in blocos:
+            col = bloco["Coluna"]
+            if col not in bruto.columns:
+                continue
+
+            valor = pd.to_numeric(bruto.loc[idx, col], errors="coerce")
+            if pd.notna(valor):
+                linha_tem_valor = True
+                registros.append(
+                    {
+                        "Produto": bloco["Produto"],
+                        "Linha": str(linha_nome).strip(),
+                        "Linha_Normalizada": normalizar_texto(linha_nome),
+                        "Métrica": bloco["Métrica"],
+                        "Valor": float(valor),
+                        "Ordem_Linha": ordem,
+                    }
+                )
+
+        if linha_tem_valor:
+            ordem += 1
+
+    df = pd.DataFrame(registros)
+
+    if df.empty:
+        raise ValueError("A aba P&L Mensal foi encontrada, mas nenhum valor numérico foi lido.")
+
+    return df
+
+
+def obter_linhas_principais_pnl(df_pnl):
+    linhas_desejadas = [
+        "RECEITAS",
+        "Operações de Crédito",
+        "DESPESAS DE ORIGINAÇÃO",
+        "MARGEM INTERMEDIAÇÃO",
+        "MG INTERMEDIAÇÃO LIQ",
+        "MG CONTRIBUIÇÃO DIRETA",
+        "RESULTADO ANTES IMPOSTO",
+        "RESULTADO CONTÁBIL",
+    ]
+
+    disponiveis = df_pnl[["Linha", "Linha_Normalizada", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
+
+    selecionadas = []
+    for linha in linhas_desejadas:
+        alvo = normalizar_texto(linha)
+        match = disponiveis[disponiveis["Linha_Normalizada"].eq(alvo)]
+
+        if match.empty:
+            match = disponiveis[disponiveis["Linha_Normalizada"].str.contains(alvo, regex=False, na=False)]
+
+        if not match.empty:
+            selecionadas.append(match.iloc[0]["Linha"])
+
+    return selecionadas
+
+
+def valor_pnl(df, produto, linha, metrica):
+    base = df[
+        (df["Produto"] == produto)
+        & (df["Linha"] == linha)
+        & (df["Métrica"] == metrica)
+    ]
+
+    if base.empty:
+        return 0
+
+    return base["Valor"].sum()
+
+
+def card_pnl(titulo, valor, variacao=None):
+    delta_html = ""
+    if variacao is not None and pd.notna(variacao):
+        delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
+
+    st.markdown(
+        f"""
+        <div class="kpi-card">
+            <div class="kpi-label">{titulo}</div>
+            <div class="kpi-value">{formatar_moeda(valor)}</div>
+            {delta_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def montar_tabela_pnl_principal(df_pnl, linhas_principais):
+    base = df_pnl[df_pnl["Linha"].isin(linhas_principais)].copy()
+
+    tabela = (
+        base.pivot_table(
+            index=["Produto", "Linha"],
+            columns="Métrica",
+            values="Valor",
+            aggfunc="sum",
+        )
+        .reset_index()
+    )
+
+    for col in ["Realizado", "Orçado", "Δ %", "Δ R$"]:
+        if col not in tabela.columns:
+            tabela[col] = pd.NA
+
+    ordem_linhas = {linha: i for i, linha in enumerate(linhas_principais)}
+    ordem_produtos = {"Consignado": 1, "Imobiliário": 2, "Total": 3}
+    tabela["ordem_linha"] = tabela["Linha"].map(ordem_linhas)
+    tabela["ordem_produto"] = tabela["Produto"].map(ordem_produtos)
+    tabela = tabela.sort_values(["ordem_produto", "ordem_linha"]).drop(columns=["ordem_produto", "ordem_linha"])
+
+    return tabela[["Produto", "Linha", "Realizado", "Orçado", "Δ %", "Δ R$"]]
+
+
+def tabela_html_pnl(df, df_valores=None):
+    html = ['<div class="table-wrap"><table class="dash-table">']
+    html.append("<thead><tr>")
+    for col in df.columns:
+        html.append(f"<th>{col}</th>")
+    html.append("</tr></thead><tbody>")
+
+    for idx, row in df.iterrows():
+        is_total = str(row.get("Linha", "")).strip().lower() in ["resultado contábil", "resultado contabil"]
+        classe_linha = ' class="total-row"' if is_total else ""
+        html.append(f"<tr{classe_linha}>")
+
+        for col in df.columns:
+            classes = []
+            if df_valores is not None and col in df_valores.columns and col not in ["Produto", "Linha"]:
+                valor = df_valores.loc[idx, col]
+                if pd.notna(valor) and isinstance(valor, (int, float)) and valor < 0:
+                    classes.append("neg-value")
+
+            classe_td = f' class="{" ".join(classes)}"' if classes else ""
+            html.append(f"<td{classe_td}>{row[col]}</td>")
+
+        html.append("</tr>")
+
+    html.append("</tbody></table></div>")
+    return "".join(html)
+
+
 def achar_linha_exata_ou_contendo(df, termos):
     linhas = df[["Linha", "Linha_Normalizada", "Ordem_Linha"]].drop_duplicates().sort_values("Ordem_Linha")
     for termo in termos:
@@ -833,12 +1042,139 @@ with tab_resultados:
 
 with tab_pnl_mensal:
     try:
-        df_base = carregar_base_dash(arquivo)
-        df_mensal = df_base[df_base["Visao"].str.lower().eq("mensal")].copy()
-        st.markdown('<div class="section-title">P&L Mensal</div>', unsafe_allow_html=True)
-        st.dataframe(df_mensal, use_container_width=True, hide_index=True)
+        df_pnl = carregar_pnl_mensal(arquivo)
+        linhas_principais = obter_linhas_principais_pnl(df_pnl)
+
+        st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
+        col_produto, col_espaco = st.columns([1, 3])
+        with col_produto:
+            produto_sel_pnl = st.selectbox(
+                "Produto",
+                ["Consignado", "Imobiliário", "Total"],
+                index=2,
+                key="produto_pnl_mensal",
+            )
+
+        st.markdown('<div class="section-title">Principais linhas do P&L Mensal</div>', unsafe_allow_html=True)
+
+        for inicio in range(0, len(linhas_principais), 4):
+            cols_cards = st.columns(4)
+            for col_card, linha in zip(cols_cards, linhas_principais[inicio:inicio + 4]):
+                realizado = valor_pnl(df_pnl, produto_sel_pnl, linha, "Realizado")
+                variacao = valor_pnl(df_pnl, produto_sel_pnl, linha, "Δ %")
+                with col_card:
+                    card_pnl(linha, realizado, variacao=variacao)
+
+        st.markdown('<div class="section-title">Realizado x Orçado por linha principal</div>', unsafe_allow_html=True)
+
+        base_grafico = df_pnl[
+            (df_pnl["Produto"] == produto_sel_pnl)
+            & (df_pnl["Linha"].isin(linhas_principais))
+            & (df_pnl["Métrica"].isin(["Realizado", "Orçado"]))
+        ].copy()
+
+        ordem_linhas = {linha: i for i, linha in enumerate(linhas_principais)}
+        base_grafico["Ordem"] = base_grafico["Linha"].map(ordem_linhas)
+        base_grafico = base_grafico.sort_values("Ordem", ascending=False)
+
+        fig_comp = px.bar(
+            base_grafico,
+            x="Valor",
+            y="Linha",
+            color="Métrica",
+            orientation="h",
+            barmode="group",
+            labels={"Valor": "Valor", "Linha": "", "Métrica": ""},
+        )
+        fig_comp.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#080f1f",
+            plot_bgcolor="#080f1f",
+            height=470,
+            margin=dict(l=10, r=10, t=10, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+        fig_comp.update_xaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+        fig_comp.update_yaxes(showgrid=False, zeroline=False)
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+        col_chart_1, col_chart_2 = st.columns(2)
+
+        with col_chart_1:
+            st.markdown('<div class="section-title">Variação % vs Orçado</div>', unsafe_allow_html=True)
+            base_var = df_pnl[
+                (df_pnl["Produto"] == produto_sel_pnl)
+                & (df_pnl["Linha"].isin(linhas_principais))
+                & (df_pnl["Métrica"] == "Δ %")
+            ].copy()
+            base_var["Ordem"] = base_var["Linha"].map(ordem_linhas)
+            base_var = base_var.sort_values("Ordem", ascending=False)
+
+            fig_var = px.bar(
+                base_var,
+                x="Valor",
+                y="Linha",
+                orientation="h",
+                labels={"Valor": "Δ %", "Linha": ""},
+            )
+            fig_var.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#080f1f",
+                plot_bgcolor="#080f1f",
+                height=390,
+                margin=dict(l=10, r=10, t=10, b=10),
+                showlegend=False,
+            )
+            fig_var.update_xaxes(showgrid=False, zeroline=False, tickformat=".1%")
+            fig_var.update_yaxes(showgrid=False, zeroline=False)
+            st.plotly_chart(fig_var, use_container_width=True)
+
+        with col_chart_2:
+            st.markdown('<div class="section-title">Resultado Contábil por produto</div>', unsafe_allow_html=True)
+            linha_resultado_contabil = next(
+                (linha for linha in linhas_principais if normalizar_texto(linha) in ["resultado contabil", "resultado contábil"]),
+                linhas_principais[-1] if linhas_principais else None,
+            )
+
+            base_produtos = df_pnl[
+                (df_pnl["Linha"] == linha_resultado_contabil)
+                & (df_pnl["Produto"].isin(["Consignado", "Imobiliário", "Total"]))
+                & (df_pnl["Métrica"] == "Realizado")
+            ].copy()
+
+            fig_prod = px.bar(
+                base_produtos,
+                x="Produto",
+                y="Valor",
+                text_auto=".2s",
+                labels={"Valor": "Realizado", "Produto": ""},
+            )
+            fig_prod.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#080f1f",
+                plot_bgcolor="#080f1f",
+                height=390,
+                margin=dict(l=10, r=10, t=10, b=10),
+                showlegend=False,
+            )
+            fig_prod.update_xaxes(showgrid=False, zeroline=False)
+            fig_prod.update_yaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+            st.plotly_chart(fig_prod, use_container_width=True)
+
+        st.markdown('<div class="section-title">Resumo das linhas principais por produto</div>', unsafe_allow_html=True)
+        tabela_pnl = montar_tabela_pnl_principal(df_pnl, linhas_principais)
+        tabela_valores = tabela_pnl.copy()
+        tabela_fmt = tabela_pnl.copy()
+
+        for col in ["Realizado", "Orçado", "Δ R$"]:
+            tabela_fmt[col] = tabela_fmt[col].map(formatar_numero)
+
+        tabela_fmt["Δ %"] = tabela_fmt["Δ %"].map(formatar_percentual)
+
+        st.markdown(tabela_html_pnl(tabela_fmt, tabela_valores), unsafe_allow_html=True)
+
     except Exception as erro:
-        st.info(f"Não consegui carregar a aba BASE_DASH para P&L Mensal: {erro}")
+        st.info(f"Não consegui carregar a aba P&L Mensal: {erro}")
 
 with tab_pnl_acum:
     try:
