@@ -1953,7 +1953,7 @@ def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
 
     fig.add_annotation(
         x=0.5,
-        y=-0.10,
+        y=-0.24,
         xref="paper",
         yref="paper",
         showarrow=False,
@@ -1963,15 +1963,15 @@ def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
             f"<b>Acumulado de 2025:</b> {formatar_moeda(base)}<br>"
             f"{texto_status}"
         ),
-        font={"size": 14, "color": "#9fb2df"},
+        font={"size": 13, "color": "#9fb2df"},
     )
 
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="#080f1f",
         plot_bgcolor="#080f1f",
-        height=360,
-        margin=dict(l=20, r=20, t=70, b=95),
+        height=420,
+        margin=dict(l=20, r=20, t=70, b=150),
     )
 
     return fig
