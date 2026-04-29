@@ -1023,7 +1023,7 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
     lista_periodos_pnl = [item["Período"] for item in periodos_pnl]
 
     st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-    col_data, col_empresa, col_produto, col_espaco = st.columns([1, 1, 1, 1.5])
+    col_data, col_produto, col_espaco = st.columns([1, 1, 2.5])
 
     with col_data:
         data_sel_pnl = st.selectbox(
@@ -1033,23 +1033,9 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
             key=f"data_pnl_{pagina.lower()}",
         )
 
-    with col_empresa:
-        empresa_sel_pnl = st.selectbox(
-            "Empresa",
-            ["Todos", "Banco", "Hipotecária"],
-            index=0,
-            key=f"empresa_pnl_{pagina.lower()}",
-        )
-
-    mapa_empresa_produto = {"Banco": "Consignado", "Hipotecária": "Imobiliário"}
-    if empresa_sel_pnl == "Todos":
-        opcoes_produto = ["Consignado", "Imobiliário", "Total"]
-        index_produto = 2
-        produto_disabled = False
-    else:
-        opcoes_produto = [mapa_empresa_produto[empresa_sel_pnl]]
-        index_produto = 0
-        produto_disabled = True
+    empresa_sel_pnl = "Todos"
+    opcoes_produto = ["Consignado", "Imobiliário", "Total"]
+    index_produto = 2
 
     with col_produto:
         produto_sel_pnl = st.selectbox(
@@ -1057,7 +1043,6 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
             opcoes_produto,
             index=index_produto,
             key=f"produto_pnl_{pagina.lower()}",
-            disabled=produto_disabled,
         )
 
     if pagina == "Acumulado":
@@ -1762,7 +1747,7 @@ tab_resultados, tab_pnl_mensal, tab_pnl_acum = st.tabs(
 
 with tab_resultados:
     st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-    col_filtro_mes, col_filtro_empresa, col_filtro_vazio = st.columns([1, 1, 2])
+    col_filtro_mes, col_filtro_vazio = st.columns([1, 3])
     with col_filtro_mes:
         periodo_sel = st.selectbox(
             "Mês de referência",
@@ -1770,13 +1755,8 @@ with tab_resultados:
             index=periodo_padrao,
             key="periodo_resultados",
         )
-    with col_filtro_empresa:
-        empresa_sel_result = st.selectbox(
-            "Empresa",
-            ["Todos", "Banco", "Hipotecária"],
-            index=0,
-            key="empresa_resultados",
-        )
+
+    empresa_sel_result = "Todos"
 
     df_principais = montar_resultados_principais(df_resultado)
     df_cards = df_principais[df_principais["Período"] == periodo_sel].copy()
