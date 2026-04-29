@@ -861,10 +861,15 @@ def obter_linhas_tabela_pnl(df_pnl):
     if df_pnl.empty:
         return []
 
+    # Algumas linhas aparecem duplicadas na planilha com o mesmo nome
+    # em nível sintético e analítico, como "Provisões".
+    # Para o dashboard, mantemos apenas a primeira ocorrência visual
+    # para evitar linha duplicada e valores dobrados na tabela.
     linhas = (
-        df_pnl[["Linha", "Ordem_Linha"]]
+        df_pnl[["Linha", "Linha_Normalizada", "Ordem_Linha"]]
         .drop_duplicates()
         .sort_values("Ordem_Linha")
+        .drop_duplicates(subset=["Linha_Normalizada"], keep="first")
     )
 
     return linhas["Linha"].tolist()
@@ -908,7 +913,14 @@ def valor_pnl(df, produto, linha, metrica):
     if base.empty:
         return 0
 
-    return base["Valor"].sum()
+    # Se a mesma linha aparece mais de uma vez no mesmo bloco da planilha
+    # com o mesmo nome, não devemos somar as ocorrências, pois isso dobra
+    # valores como "Provisões". Mantemos a primeira ocorrência pela ordem
+    # visual da própria planilha.
+    if "Ordem_Linha" in base.columns:
+        base = base.sort_values("Ordem_Linha")
+
+    return base["Valor"].iloc[0]
 
 
 def variacao_pnl_mes_anterior(df_pnl_completo, produto, linha, periodo_atual):
@@ -938,8 +950,13 @@ def variacao_pnl_mes_anterior(df_pnl_completo, produto, linha, periodo_atual):
 
     periodo_anterior = anteriores["Periodo"].iloc[-1]
 
-    valor_atual = linha_atual["Valor"].sum()
-    valor_anterior = anteriores[anteriores["Periodo"] == periodo_anterior]["Valor"].sum()
+    valor_atual = valor_pnl(df_pnl_completo[df_pnl_completo["Periodo"] == periodo_atual], produto, linha, "Realizado")
+    valor_anterior = valor_pnl(
+        df_pnl_completo[df_pnl_completo["Periodo"] == periodo_anterior],
+        produto,
+        linha,
+        "Realizado",
+    )
 
     if valor_anterior == 0:
         return None
