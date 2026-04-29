@@ -1932,7 +1932,7 @@ def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
             mode="gauge+number",
             value=alcance_pct,
             number={"suffix": "%", "font": {"size": 36, "color": "#ffffff"}},
-            title={"text": "<b>Resultado Contábil 1T26 vs acumulado 2025</b>", "font": {"size": 20, "color": "#ffffff"}},
+            title={"text": "<b>Resultado Contábil 1T26 x acumulado de 2025</b>", "font": {"size": 20, "color": "#ffffff"}},
             gauge={
                 "axis": {"range": [0, eixo_max], "tickformat": ".0f", "tickfont": {"color": "#9fb2df"}},
                 "bar": {"color": cor_barra, "thickness": 0.34},
@@ -1947,20 +1947,21 @@ def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
 
     diferenca = realizado - base
     if diferenca >= 0:
-        texto_status = f"<b>Acima da base 2025:</b> {formatar_moeda(diferenca)}"
+        texto_status = f"<b>Superou o acumulado de 2025 em:</b> {formatar_moeda(diferenca)}"
     else:
-        texto_status = f"<b>Falta para atingir a base 2025:</b> {formatar_moeda(abs(diferenca))}"
+        texto_status = f"<b>Falta para alcançar o acumulado de 2025:</b> {formatar_moeda(abs(diferenca))}"
 
     fig.add_annotation(
         x=0.5,
-        y=-0.05,
+        y=-0.10,
         xref="paper",
         yref="paper",
         showarrow=False,
         align="center",
         text=(
-            f"<b>Realizado 1T26:</b> {formatar_moeda(realizado)} &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"<b>Acumulado 2025:</b> {formatar_moeda(base)}<br>{texto_status}"
+            f"<b>Realizado no 1T26:</b> {formatar_moeda(realizado)}<br>"
+            f"<b>Acumulado de 2025:</b> {formatar_moeda(base)}<br>"
+            f"{texto_status}"
         ),
         font={"size": 14, "color": "#9fb2df"},
     )
@@ -1969,8 +1970,8 @@ def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
         template="plotly_dark",
         paper_bgcolor="#080f1f",
         plot_bgcolor="#080f1f",
-        height=330,
-        margin=dict(l=20, r=20, t=70, b=70),
+        height=360,
+        margin=dict(l=20, r=20, t=70, b=95),
     )
 
     return fig
@@ -2287,7 +2288,7 @@ with tab_comp_2025:
                             variacao_label="Δ 1T26 vs 1T25",
                         )
 
-            st.markdown('<div class="section-title">Quanto do Resultado Contábil acumulado de 2025 já foi atingido</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">Quanto do Resultado Contábil acumulado de 2025 já foi alcançado</div>', unsafe_allow_html=True)
             linha_resultado = obter_linha_comparativo(df_comp_principais, "RESULTADO CONTÁBIL")
             if linha_resultado.empty:
                 st.info("Não encontrei a linha de Resultado Contábil para montar o gráfico de alcance.")
