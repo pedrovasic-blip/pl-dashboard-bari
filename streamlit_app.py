@@ -81,7 +81,7 @@ CSS = """
     table.pnl-matrix tbody tr.main-line td {
         background: #162338;
         color: #ffffff;
-        font-weight: 400;
+        font-weight: 850;
     }
     table.pnl-matrix tbody tr.main-line td:first-child {
         font-weight: 900;
@@ -413,6 +413,51 @@ def formatar_percentual(valor):
 
     sinal = "+" if valor > 0 else ""
     texto = f"{sinal}{valor * 100:,.1f}%"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def linhas_percentuais_pnl():
+    return {
+        normalizar_texto("Margem Bruta"),
+        normalizar_texto("Margem Liquida"),
+        normalizar_texto("Margem Líquida"),
+        normalizar_texto("Rácio de Eficiência"),
+        normalizar_texto("Rácio de Eficiência Recorrente"),
+        normalizar_texto("RPL - RES. CONTÁBIL"),
+        normalizar_texto("Taxa Média Carteira Bruta Média"),
+        normalizar_texto("Taxa Média Carteira SD Cliente Média"),
+        normalizar_texto("Rateio Carteira"),
+        normalizar_texto("Rateio da Carteira"),
+        normalizar_texto("Alíquota de IR/CSLL"),
+    }
+
+
+def linha_pnl_percentual(linha):
+    return normalizar_texto(linha) in linhas_percentuais_pnl()
+
+
+def formatar_percentual_valor(valor):
+    if pd.isna(valor):
+        return ""
+    try:
+        valor = float(valor)
+    except Exception:
+        return str(valor)
+
+    texto = f"{valor * 100:,.1f}%"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def formatar_pontos_percentuais(valor):
+    if pd.isna(valor):
+        return ""
+    try:
+        valor = float(valor)
+    except Exception:
+        return str(valor)
+
+    sinal = "+" if valor > 0 else ""
+    texto = f"{sinal}{valor * 100:,.1f} pp"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -1266,13 +1311,20 @@ def montar_matriz_pnl_excel(df_pnl, linhas_principais):
 
     for linha in linhas_principais:
         row = {"Linha": linha}
+        linha_percentual = linha_pnl_percentual(linha)
 
         for produto in produtos:
             realizado = valor_pnl(df_pnl, produto, linha, "Realizado")
             orcado = valor_pnl(df_pnl, produto, linha, "Orçado")
 
             delta_rs = realizado - orcado
-            delta_pct = pd.NA if orcado == 0 else delta_rs / abs(orcado)
+
+            # Para indicadores percentuais, a variação correta é em pontos percentuais,
+            # não em percentual relativo. Ex.: 8,4% - 8,6% = -0,2 pp.
+            if linha_percentual:
+                delta_pct = delta_rs if pd.notna(delta_rs) else pd.NA
+            else:
+                delta_pct = pd.NA if orcado == 0 else delta_rs / abs(orcado)
 
             row[(produto, "Realizado")] = realizado
             row[(produto, "Orçado")] = orcado
@@ -1281,7 +1333,9 @@ def montar_matriz_pnl_excel(df_pnl, linhas_principais):
             # Regra de cor:
             # Para linhas de despesa/custo negativas, compara o tamanho do gasto em módulo.
             # Para as demais linhas, compara Realizado > Orçado.
-            if realizado < 0 or orcado < 0:
+            if pd.isna(realizado) or pd.isna(orcado):
+                delta_bad = False
+            elif realizado < 0 or orcado < 0:
                 delta_bad = abs(realizado) > abs(orcado)
             else:
                 delta_bad = realizado > orcado
@@ -1289,7 +1343,8 @@ def montar_matriz_pnl_excel(df_pnl, linhas_principais):
             row[(produto, "_delta_bad")] = delta_bad
 
             if produto == "Total":
-                row[(produto, "Δ R$")] = delta_rs
+                # Δ R$ não se aplica a indicadores percentuais.
+                row[(produto, "Δ R$")] = pd.NA if linha_percentual else delta_rs
 
         linhas.append(row)
 
@@ -1339,19 +1394,25 @@ def tabela_html_pnl_matriz(df_matrix, produtos, metricas_por_produto):
         html.append(f"<tr{tr_class}>")
         html.append(f"<td>{linha}</td>")
 
+        linha_percentual = linha_pnl_percentual(linha)
+
         for produto in produtos:
             for metrica in metricas_por_produto[produto]:
                 valor = row[(produto, metrica)]
                 classes = []
 
                 if metrica == "Δ %":
-                    texto = formatar_percentual(valor)
+                    texto = formatar_pontos_percentuais(valor) if linha_percentual else formatar_percentual(valor)
                     if pd.notna(valor):
                         classes.append("delta-negative" if row[(produto, "_delta_bad")] else "delta-positive")
                 elif metrica == "Δ R$":
-                    texto = formatar_numero(valor)
-                    if pd.notna(valor):
+                    texto = "" if linha_percentual else formatar_numero(valor)
+                    if (not linha_percentual) and pd.notna(valor):
                         classes.append("delta-negative" if row[(produto, "_delta_bad")] else "delta-positive")
+                elif linha_percentual and metrica in ["Realizado", "Orçado"]:
+                    texto = formatar_percentual_valor(valor)
+                    if pd.notna(valor) and valor < 0:
+                        classes.append("neg-value")
                 else:
                     texto = formatar_numero(valor)
                     if pd.notna(valor) and valor < 0:
