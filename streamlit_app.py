@@ -1777,7 +1777,50 @@ def carregar_comparativo_2025(arquivo):
     return df
 
 
-def montar_comparativo_principais(df_comp):
+def carregar_2025_acumulado(arquivo):
+    try:
+        bruto = pd.read_excel(arquivo, sheet_name="2025 Acumulado", header=None, engine="openpyxl")
+    except Exception:
+        return pd.DataFrame()
+
+    def valor_numero(v):
+        if pd.isna(v):
+            return pd.NA
+        try:
+            return float(v)
+        except Exception:
+            return pd.NA
+
+    registros = []
+    for idx_row in bruto.index:
+        linha = bruto.iat[idx_row, 0] if 0 in bruto.columns else None
+        linha_norm = normalizar_texto(linha)
+        if not linha_norm:
+            continue
+
+        realizado_total = valor_numero(bruto.iat[idx_row, 7]) if 7 in bruto.columns else pd.NA
+        orcado_total = valor_numero(bruto.iat[idx_row, 8]) if 8 in bruto.columns else pd.NA
+        delta_total = valor_numero(bruto.iat[idx_row, 9]) if 9 in bruto.columns else pd.NA
+
+        registros.append(
+            {
+                "Linha": str(linha).strip(),
+                "Linha_Normalizada": linha_norm,
+                "Realizado": realizado_total,
+                "Orçado": orcado_total,
+                "Δ Orçado": delta_total,
+                "Ordem": int(idx_row),
+            }
+        )
+
+    df = pd.DataFrame(registros)
+    if df.empty:
+        return df
+
+    return df.sort_values("Ordem").drop_duplicates(["Linha_Normalizada"], keep="first")
+
+
+def montar_comparativo_principais(df_comp, df_2025_acumulado=None):
     linhas_ordem = [
         "RECEITAS",
         "Operações de Crédito",
@@ -1789,21 +1832,34 @@ def montar_comparativo_principais(df_comp):
         "RESULTADO CONTÁBIL",
     ]
 
+    if df_2025_acumulado is None:
+        df_2025_acumulado = pd.DataFrame()
+
     linhas = []
     for ordem, linha_ref in enumerate(linhas_ordem):
         linha_norm = normalizar_texto(linha_ref)
         b25 = df_comp[(df_comp["Ano"] == 2025) & (df_comp["Linha_Normalizada"] == linha_norm)]
         b26 = df_comp[(df_comp["Ano"] == 2026) & (df_comp["Linha_Normalizada"] == linha_norm)]
+        b25_acum = (
+            df_2025_acumulado[df_2025_acumulado["Linha_Normalizada"] == linha_norm]
+            if not df_2025_acumulado.empty and "Linha_Normalizada" in df_2025_acumulado.columns
+            else pd.DataFrame()
+        )
+
         v25 = b25["Realizado"].iloc[0] if not b25.empty else pd.NA
         v26 = b26["Realizado"].iloc[0] if not b26.empty else pd.NA
+        v25_acum = b25_acum["Realizado"].iloc[0] if not b25_acum.empty else pd.NA
+
         delta_rs = v26 - v25 if pd.notna(v25) and pd.notna(v26) else pd.NA
         delta_pct = delta_rs / abs(v25) if pd.notna(delta_rs) and v25 not in [0, 0.0] and pd.notna(v25) else pd.NA
-        alcance = v26 / abs(v25) if pd.notna(v25) and v25 not in [0, 0.0] and pd.notna(v26) else pd.NA
+        alcance = v26 / abs(v25_acum) if pd.notna(v25_acum) and v25_acum not in [0, 0.0] and pd.notna(v26) else pd.NA
+
         linhas.append(
             {
                 "Linha": linha_ref,
                 "2025": v25,
                 "2026": v26,
+                "2025 Acumulado": v25_acum,
                 "Δ R$": delta_rs,
                 "Δ %": delta_pct,
                 "Alcance 2025": alcance,
@@ -1826,7 +1882,7 @@ def formatar_percentual_simples(valor):
 
 def tabela_html_comparativo(df):
     html = ['<div class="table-wrap"><table class="dash-table">']
-    cols = ["Linha", "2025", "2026", "Δ R$", "Δ %", "Alcance 2025"]
+    cols = ["Linha", "2025", "2026", "Δ R$", "Δ %", "2025 Acumulado", "Alcance 2025"]
     html.append("<thead><tr>")
     for col in cols:
         html.append(f"<th>{col}</th>")
@@ -1838,7 +1894,7 @@ def tabela_html_comparativo(df):
         for col in cols:
             valor = row[col]
             classes = []
-            if col in ["2025", "2026", "Δ R$"]:
+            if col in ["2025", "2026", "Δ R$", "2025 Acumulado"]:
                 texto = formatar_numero(valor)
                 if pd.notna(valor) and valor < 0:
                     classes.append("neg-value")
@@ -1876,7 +1932,7 @@ def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
             mode="gauge+number",
             value=alcance_pct,
             number={"suffix": "%", "font": {"size": 36, "color": "#ffffff"}},
-            title={"text": "<b>Resultado Contábil 1T26 vs base 2025</b>", "font": {"size": 20, "color": "#ffffff"}},
+            title={"text": "<b>Resultado Contábil 1T26 vs acumulado 2025</b>", "font": {"size": 20, "color": "#ffffff"}},
             gauge={
                 "axis": {"range": [0, eixo_max], "tickformat": ".0f", "tickfont": {"color": "#9fb2df"}},
                 "bar": {"color": cor_barra, "thickness": 0.34},
@@ -1904,7 +1960,7 @@ def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
         align="center",
         text=(
             f"<b>Realizado 1T26:</b> {formatar_moeda(realizado)} &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"<b>Base 2025:</b> {formatar_moeda(base)}<br>{texto_status}"
+            f"<b>Acumulado 2025:</b> {formatar_moeda(base)}<br>{texto_status}"
         ),
         font={"size": 14, "color": "#9fb2df"},
     )
@@ -2199,7 +2255,8 @@ with tab_pnl_acum:
 with tab_comp_2025:
     try:
         df_comp = carregar_comparativo_2025(arquivo)
-        df_comp_principais = montar_comparativo_principais(df_comp)
+        df_2025_acumulado = carregar_2025_acumulado(arquivo)
+        df_comp_principais = montar_comparativo_principais(df_comp, df_2025_acumulado)
 
         if df_comp.empty or df_comp_principais.empty:
             st.info("Não encontrei dados suficientes na aba Comparativo 2026 x 2025.")
@@ -2230,12 +2287,12 @@ with tab_comp_2025:
                             variacao_label="Δ 1T26 vs 1T25",
                         )
 
-            st.markdown('<div class="section-title">Quanto do Resultado Contábil de 2025 já foi atingido</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">Quanto do Resultado Contábil acumulado de 2025 já foi atingido</div>', unsafe_allow_html=True)
             linha_resultado = obter_linha_comparativo(df_comp_principais, "RESULTADO CONTÁBIL")
             if linha_resultado.empty:
                 st.info("Não encontrei a linha de Resultado Contábil para montar o gráfico de alcance.")
             else:
-                valor_base_2025 = linha_resultado["2025"].iloc[0]
+                valor_base_2025 = linha_resultado["2025 Acumulado"].iloc[0]
                 valor_1t26 = linha_resultado["2026"].iloc[0]
                 fig_alcance_resultado = grafico_alcance_resultado_contabil(valor_1t26, valor_base_2025)
                 if fig_alcance_resultado is not None:
