@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 
@@ -561,14 +562,14 @@ def nome_periodo(data):
     return f"{meses[data.month - 1]}/{data.year}"
 
 
-def formatar_variacao(valor):
+def formatar_variacao(valor, label="Δ mês anterior"):
     try:
         valor = float(valor)
     except Exception:
         valor = 0.0
 
     sinal = "+" if valor > 0 else ""
-    texto = f"Δ mês anterior {sinal}{valor * 100:,.1f}%"
+    texto = f"{label} {sinal}{valor * 100:,.1f}%"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -585,10 +586,10 @@ def classe_variacao(valor):
     return "delta-neutral"
 
 
-def card(titulo, valor, ajuda="", variacao=None):
+def card(titulo, valor, ajuda="", variacao=None, variacao_label="Δ mês anterior"):
     delta_html = ""
     if variacao is not None:
-        delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
+        delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao, variacao_label)}</div>'
 
     ajuda_html = f'<div class="kpi-help">{ajuda}</div>' if ajuda else ""
 
@@ -1248,7 +1249,7 @@ def card_pnl(titulo, valor, variacao=None):
     if variacao is None or pd.isna(variacao):
         delta_html = '<div class="kpi-delta delta-neutral">N/D</div>'
     else:
-        delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao)}</div>'
+        delta_html = f'<div class="kpi-delta {classe_variacao(variacao)}">{formatar_variacao(variacao, variacao_label)}</div>'
 
     st.markdown(
         f"""
@@ -1854,6 +1855,71 @@ def tabela_html_comparativo(df):
     return "".join(html)
 
 
+def obter_linha_comparativo(df_comp_principais, linha_ref):
+    linha_norm = normalizar_texto(linha_ref)
+    return df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq(linha_norm)]
+
+
+def grafico_alcance_resultado_contabil(valor_2026, valor_base_2025):
+    if pd.isna(valor_2026) or pd.isna(valor_base_2025) or float(valor_base_2025) == 0:
+        return None
+
+    base = abs(float(valor_base_2025))
+    realizado = float(valor_2026)
+    alcance = realizado / base
+    alcance_pct = alcance * 100
+    eixo_max = max(100.0, alcance_pct * 1.25)
+    cor_barra = "#24a8ff" if alcance_pct <= 100 else "#22c55e"
+
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=alcance_pct,
+            number={"suffix": "%", "font": {"size": 36, "color": "#ffffff"}},
+            title={"text": "<b>Resultado Contábil 1T26 vs base 2025</b>", "font": {"size": 20, "color": "#ffffff"}},
+            gauge={
+                "axis": {"range": [0, eixo_max], "tickformat": ".0f", "tickfont": {"color": "#9fb2df"}},
+                "bar": {"color": cor_barra, "thickness": 0.34},
+                "bgcolor": "#111a2e",
+                "bordercolor": "#243150",
+                "borderwidth": 1,
+                "steps": [{"range": [0, min(100.0, eixo_max)], "color": "#162338"}],
+                "threshold": {"line": {"color": "#ef4444", "width": 4}, "thickness": 0.85, "value": 100},
+            },
+        )
+    )
+
+    diferenca = realizado - base
+    if diferenca >= 0:
+        texto_status = f"<b>Acima da base 2025:</b> {formatar_moeda(diferenca)}"
+    else:
+        texto_status = f"<b>Falta para atingir a base 2025:</b> {formatar_moeda(abs(diferenca))}"
+
+    fig.add_annotation(
+        x=0.5,
+        y=-0.05,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        align="center",
+        text=(
+            f"<b>Realizado 1T26:</b> {formatar_moeda(realizado)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"<b>Base 2025:</b> {formatar_moeda(base)}<br>{texto_status}"
+        ),
+        font={"size": 14, "color": "#9fb2df"},
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#080f1f",
+        plot_bgcolor="#080f1f",
+        height=330,
+        margin=dict(l=20, r=20, t=70, b=70),
+    )
+
+    return fig
+
+
 def montar_tabela_empresas_e_total(df):
     excluir_exatos = {
         "banco",
@@ -2140,61 +2206,42 @@ with tab_comp_2025:
         else:
             st.markdown('<div class="section-title">Comparativo 1T26 x 1T25</div>', unsafe_allow_html=True)
 
-            linha_resultado = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("resultado contabil")]
-            linha_rai = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("resultado antes imposto")]
-            linha_receitas = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("receitas")]
-            linha_mg = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("mg contribuicao direta")]
-
             cards_comp = [
-                ("Resultado Contábil 1T26", linha_resultado),
-                ("Resultado Antes Imposto 1T26", linha_rai),
-                ("Receitas 1T26", linha_receitas),
-                ("MG Contribuição Direta 1T26", linha_mg),
+                ("Resultado Contábil 1T26", "RESULTADO CONTÁBIL"),
+                ("Receitas 1T26", "RECEITAS"),
+                ("Despesas 1T26", "DESPESAS DE ORIGINAÇÃO"),
             ]
-            cols = st.columns(4)
-            for col, (titulo, linha_df) in zip(cols, cards_comp):
+            cols = st.columns(3)
+            for col, (titulo, linha_nome) in zip(cols, cards_comp):
                 with col:
+                    linha_df = obter_linha_comparativo(df_comp_principais, linha_nome)
                     if linha_df.empty:
-                        valor = 0
-                        variacao = None
+                        card(titulo, 0, ajuda="Sem dados na base", variacao=None)
                     else:
-                        valor = linha_df["2026"].iloc[0]
+                        valor_2025 = linha_df["2025"].iloc[0]
+                        valor_2026 = linha_df["2026"].iloc[0]
                         variacao = linha_df["Δ %"].iloc[0]
-                    card(titulo, valor, variacao=variacao)
+                        ajuda = f"1T26: {formatar_moeda(valor_2026)} | 1T25: {formatar_moeda(valor_2025)}"
+                        card(
+                            titulo,
+                            valor_2026,
+                            ajuda=ajuda,
+                            variacao=variacao,
+                            variacao_label="Δ 1T26 vs 1T25",
+                        )
 
-            st.markdown('<div class="section-title">Alcance frente ao total/base 2025</div>', unsafe_allow_html=True)
-            c_alc1, c_alc2, c_alc3 = st.columns(3)
-            for col, linha_nome in zip(
-                [c_alc1, c_alc2, c_alc3],
-                ["RESULTADO CONTÁBIL", "RECEITAS", "MARGEM INTERMEDIAÇÃO"],
-            ):
-                linha_base = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq(normalizar_texto(linha_nome))]
-                with col:
-                    if linha_base.empty:
-                        st.markdown(
-                            f"""
-                            <div class="kpi-card">
-                                <div class="kpi-label">{linha_nome}</div>
-                                <div class="kpi-value">N/D</div>
-                                <div class="kpi-help">Sem base 2025</div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        v25 = linha_base["2025"].iloc[0]
-                        v26 = linha_base["2026"].iloc[0]
-                        alcance = linha_base["Alcance 2025"].iloc[0]
-                        st.markdown(
-                            f"""
-                            <div class="kpi-card">
-                                <div class="kpi-label">{linha_nome}</div>
-                                <div class="kpi-value">{formatar_percentual_simples(alcance)}</div>
-                                <div class="kpi-help">1T26: {formatar_moeda(v26)} | 2025: {formatar_moeda(v25)}</div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+            st.markdown('<div class="section-title">Quanto do Resultado Contábil de 2025 já foi atingido</div>', unsafe_allow_html=True)
+            linha_resultado = obter_linha_comparativo(df_comp_principais, "RESULTADO CONTÁBIL")
+            if linha_resultado.empty:
+                st.info("Não encontrei a linha de Resultado Contábil para montar o gráfico de alcance.")
+            else:
+                valor_base_2025 = linha_resultado["2025"].iloc[0]
+                valor_1t26 = linha_resultado["2026"].iloc[0]
+                fig_alcance_resultado = grafico_alcance_resultado_contabil(valor_1t26, valor_base_2025)
+                if fig_alcance_resultado is not None:
+                    st.plotly_chart(fig_alcance_resultado, use_container_width=True)
+                else:
+                    st.info("Não foi possível calcular o alcance do Resultado Contábil com a base atual.")
 
             st.markdown('<div class="section-title">1T25 x 1T26 por linha principal</div>', unsafe_allow_html=True)
             base_long = df_comp_principais.melt(
@@ -2237,36 +2284,6 @@ with tab_comp_2025:
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             )
             st.plotly_chart(fig_comp_ano, use_container_width=True)
-
-            st.markdown('<div class="section-title">Percentual de alcance frente a 2025</div>', unsafe_allow_html=True)
-            base_alcance = df_comp_principais.dropna(subset=["Alcance 2025"]).copy()
-            base_alcance["Alcance_Label"] = base_alcance["Alcance 2025"].map(formatar_percentual_simples)
-            base_alcance = base_alcance.sort_values("Ordem", ascending=False)
-            fig_alcance = px.bar(
-                base_alcance,
-                x="Alcance 2025",
-                y="Linha",
-                text="Alcance_Label",
-                orientation="h",
-                labels={"Alcance 2025": "", "Linha": ""},
-            )
-            fig_alcance.update_traces(
-                texttemplate="<b>%{text}</b>",
-                textposition="outside",
-                textfont=dict(size=11, color="#FFFFFF", family="Arial Black"),
-                cliponaxis=False,
-            )
-            fig_alcance.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="#080f1f",
-                plot_bgcolor="#080f1f",
-                height=440,
-                margin=dict(l=10, r=120, t=10, b=20),
-                showlegend=False,
-            )
-            fig_alcance.update_xaxes(showgrid=False, zeroline=False, tickformat=".0%")
-            fig_alcance.update_yaxes(showgrid=False, zeroline=False)
-            st.plotly_chart(fig_alcance, use_container_width=True)
 
             st.markdown('<div class="section-title">Tabela comparativa</div>', unsafe_allow_html=True)
             st.markdown(tabela_html_comparativo(df_comp_principais), unsafe_allow_html=True)
