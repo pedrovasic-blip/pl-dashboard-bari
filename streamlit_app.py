@@ -1708,6 +1708,152 @@ def adicionar_coluna_variacao_tabela(tabela, periodos_df, periodo_atual):
     return tabela, coluna_delta
 
 
+
+def linha_principal_comparativo(linha):
+    linhas = {
+        normalizar_texto("RECEITAS"),
+        normalizar_texto("Operações de Crédito"),
+        normalizar_texto("DESPESAS DE ORIGINAÇÃO"),
+        normalizar_texto("MARGEM INTERMEDIAÇÃO"),
+        normalizar_texto("MG INTERMEDIAÇÃO LIQ"),
+        normalizar_texto("MG CONTRIBUIÇÃO DIRETA"),
+        normalizar_texto("RESULTADO ANTES IMPOSTO"),
+        normalizar_texto("RESULTADO CONTÁBIL"),
+    }
+    return normalizar_texto(linha) in linhas
+
+
+def carregar_comparativo_2025(arquivo):
+    try:
+        bruto = pd.read_excel(arquivo, sheet_name="Comparativo 2026 x 2025", header=None, engine="openpyxl")
+    except Exception:
+        bruto = pd.read_excel(arquivo, sheet_name="Comparativo 2025", header=None, engine="openpyxl")
+
+    def valor_numero(v):
+        if pd.isna(v):
+            return pd.NA
+        try:
+            return float(v)
+        except Exception:
+            return pd.NA
+
+    # Bloco esquerdo: 2025, colunas TOTAL em H:J.
+    # Bloco direito: 2026, colunas TOTAL em V:X.
+    blocos = [
+        {"Ano": 2025, "label_col": 0, "realizado_col": 7, "orcado_col": 8, "delta_col": 9},
+        {"Ano": 2026, "label_col": 11, "realizado_col": 21, "orcado_col": 22, "delta_col": 23},
+    ]
+
+    registros = []
+    for bloco in blocos:
+        for idx_row in bruto.index:
+            linha = bruto.iat[idx_row, bloco["label_col"]] if bloco["label_col"] in bruto.columns else None
+            linha_norm = normalizar_texto(linha)
+            if not linha_norm:
+                continue
+            realizado = valor_numero(bruto.iat[idx_row, bloco["realizado_col"]]) if bloco["realizado_col"] in bruto.columns else pd.NA
+            orcado = valor_numero(bruto.iat[idx_row, bloco["orcado_col"]]) if bloco["orcado_col"] in bruto.columns else pd.NA
+            delta = valor_numero(bruto.iat[idx_row, bloco["delta_col"]]) if bloco["delta_col"] in bruto.columns else pd.NA
+
+            registros.append(
+                {
+                    "Ano": bloco["Ano"],
+                    "Linha": str(linha).strip(),
+                    "Linha_Normalizada": linha_norm,
+                    "Realizado": realizado,
+                    "Orçado": orcado,
+                    "Δ Orçado": delta,
+                    "Ordem": int(idx_row),
+                }
+            )
+
+    df = pd.DataFrame(registros)
+    if df.empty:
+        return df
+
+    # Remove duplicidade visual, mantendo a primeira ocorrência de cada linha por ano.
+    df = df.sort_values(["Ano", "Ordem"]).drop_duplicates(["Ano", "Linha_Normalizada"], keep="first")
+    return df
+
+
+def montar_comparativo_principais(df_comp):
+    linhas_ordem = [
+        "RECEITAS",
+        "Operações de Crédito",
+        "DESPESAS DE ORIGINAÇÃO",
+        "MARGEM INTERMEDIAÇÃO",
+        "MG INTERMEDIAÇÃO LIQ",
+        "MG CONTRIBUIÇÃO DIRETA",
+        "RESULTADO ANTES IMPOSTO",
+        "RESULTADO CONTÁBIL",
+    ]
+
+    linhas = []
+    for ordem, linha_ref in enumerate(linhas_ordem):
+        linha_norm = normalizar_texto(linha_ref)
+        b25 = df_comp[(df_comp["Ano"] == 2025) & (df_comp["Linha_Normalizada"] == linha_norm)]
+        b26 = df_comp[(df_comp["Ano"] == 2026) & (df_comp["Linha_Normalizada"] == linha_norm)]
+        v25 = b25["Realizado"].iloc[0] if not b25.empty else pd.NA
+        v26 = b26["Realizado"].iloc[0] if not b26.empty else pd.NA
+        delta_rs = v26 - v25 if pd.notna(v25) and pd.notna(v26) else pd.NA
+        delta_pct = delta_rs / abs(v25) if pd.notna(delta_rs) and v25 not in [0, 0.0] and pd.notna(v25) else pd.NA
+        alcance = v26 / abs(v25) if pd.notna(v25) and v25 not in [0, 0.0] and pd.notna(v26) else pd.NA
+        linhas.append(
+            {
+                "Linha": linha_ref,
+                "2025": v25,
+                "2026": v26,
+                "Δ R$": delta_rs,
+                "Δ %": delta_pct,
+                "Alcance 2025": alcance,
+                "Ordem": ordem,
+            }
+        )
+    return pd.DataFrame(linhas)
+
+
+def formatar_percentual_simples(valor):
+    if pd.isna(valor):
+        return ""
+    try:
+        valor = float(valor)
+    except Exception:
+        return str(valor)
+    texto = f"{valor * 100:,.1f}%"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def tabela_html_comparativo(df):
+    html = ['<div class="table-wrap"><table class="dash-table">']
+    cols = ["Linha", "2025", "2026", "Δ R$", "Δ %", "Alcance 2025"]
+    html.append("<thead><tr>")
+    for col in cols:
+        html.append(f"<th>{col}</th>")
+    html.append("</tr></thead><tbody>")
+
+    for _, row in df.iterrows():
+        row_cls = ' class="total-row"' if normalizar_texto(row["Linha"]) in ["resultado contabil", "resultado contábil"] else ""
+        html.append(f"<tr{row_cls}>")
+        for col in cols:
+            valor = row[col]
+            classes = []
+            if col in ["2025", "2026", "Δ R$"]:
+                texto = formatar_numero(valor)
+                if pd.notna(valor) and valor < 0:
+                    classes.append("neg-value")
+            elif col in ["Δ %", "Alcance 2025"]:
+                texto = formatar_percentual_simples(valor)
+                if col == "Δ %" and pd.notna(valor):
+                    classes.append("delta-positive" if valor >= 0 else "delta-negative")
+            else:
+                texto = str(valor)
+            cls = f' class="{" ".join(classes)}"' if classes else ""
+            html.append(f"<td{cls}>{texto}</td>")
+        html.append("</tr>")
+    html.append("</tbody></table></div>")
+    return "".join(html)
+
+
 def montar_tabela_empresas_e_total(df):
     excluir_exatos = {
         "banco",
@@ -1819,8 +1965,8 @@ st.sidebar.markdown(
 st.markdown('<div class="dash-title">Dashboard P&L 2026</div>', unsafe_allow_html=True)
 st.markdown('<div class="dash-subtitle">Resultados consolidados, evolução histórica e abertura por empresa.</div>', unsafe_allow_html=True)
 
-tab_resultados, tab_pnl_mensal, tab_pnl_acum = st.tabs(
-    ["Resultados", "P&L Mensal", "P&L Acumulado"]
+tab_resultados, tab_pnl_mensal, tab_pnl_acum, tab_comp_2025 = st.tabs(
+    ["Resultados", "P&L Mensal", "P&L Acumulado", "Comparativo 2025"]
 )
 
 with tab_resultados:
@@ -1982,4 +2128,149 @@ with tab_pnl_acum:
         render_pnl_page(df_pnl_completo_global, arquivo, pagina="Acumulado")
     else:
         st.info(f"Não consegui carregar a aba P&L Acumulado: {erro_pnl_global}")
+
+
+with tab_comp_2025:
+    try:
+        df_comp = carregar_comparativo_2025(arquivo)
+        df_comp_principais = montar_comparativo_principais(df_comp)
+
+        if df_comp.empty or df_comp_principais.empty:
+            st.info("Não encontrei dados suficientes na aba Comparativo 2026 x 2025.")
+        else:
+            st.markdown('<div class="section-title">Comparativo 1T26 x 1T25</div>', unsafe_allow_html=True)
+
+            linha_resultado = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("resultado contabil")]
+            linha_rai = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("resultado antes imposto")]
+            linha_receitas = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("receitas")]
+            linha_mg = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq("mg contribuicao direta")]
+
+            cards_comp = [
+                ("Resultado Contábil 1T26", linha_resultado),
+                ("Resultado Antes Imposto 1T26", linha_rai),
+                ("Receitas 1T26", linha_receitas),
+                ("MG Contribuição Direta 1T26", linha_mg),
+            ]
+            cols = st.columns(4)
+            for col, (titulo, linha_df) in zip(cols, cards_comp):
+                with col:
+                    if linha_df.empty:
+                        valor = 0
+                        variacao = None
+                    else:
+                        valor = linha_df["2026"].iloc[0]
+                        variacao = linha_df["Δ %"].iloc[0]
+                    card(titulo, valor, variacao=variacao)
+
+            st.markdown('<div class="section-title">Alcance frente ao total/base 2025</div>', unsafe_allow_html=True)
+            c_alc1, c_alc2, c_alc3 = st.columns(3)
+            for col, linha_nome in zip(
+                [c_alc1, c_alc2, c_alc3],
+                ["RESULTADO CONTÁBIL", "RECEITAS", "MARGEM INTERMEDIAÇÃO"],
+            ):
+                linha_base = df_comp_principais[df_comp_principais["Linha"].map(normalizar_texto).eq(normalizar_texto(linha_nome))]
+                with col:
+                    if linha_base.empty:
+                        st.markdown(
+                            f"""
+                            <div class="kpi-card">
+                                <div class="kpi-label">{linha_nome}</div>
+                                <div class="kpi-value">N/D</div>
+                                <div class="kpi-help">Sem base 2025</div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        v25 = linha_base["2025"].iloc[0]
+                        v26 = linha_base["2026"].iloc[0]
+                        alcance = linha_base["Alcance 2025"].iloc[0]
+                        st.markdown(
+                            f"""
+                            <div class="kpi-card">
+                                <div class="kpi-label">{linha_nome}</div>
+                                <div class="kpi-value">{formatar_percentual_simples(alcance)}</div>
+                                <div class="kpi-help">1T26: {formatar_moeda(v26)} | 2025: {formatar_moeda(v25)}</div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+            st.markdown('<div class="section-title">1T25 x 1T26 por linha principal</div>', unsafe_allow_html=True)
+            base_long = df_comp_principais.melt(
+                id_vars=["Linha", "Ordem"],
+                value_vars=["2025", "2026"],
+                var_name="Ano",
+                value_name="Valor",
+            ).dropna(subset=["Valor"])
+            base_long["Rótulo"] = base_long["Valor"].map(formatar_moeda_curta)
+            base_long = base_long.sort_values("Ordem", ascending=False)
+
+            fig_comp_ano = px.bar(
+                base_long,
+                x="Valor",
+                y="Linha",
+                color="Ano",
+                text="Rótulo",
+                orientation="h",
+                barmode="group",
+                labels={"Valor": "", "Linha": "", "Ano": ""},
+            )
+            fig_comp_ano.update_traces(
+                texttemplate="<b>%{text}</b>",
+                textposition="outside",
+                textfont=dict(size=11, color="#FFFFFF", family="Arial Black"),
+                cliponaxis=False,
+            )
+            if not base_long.empty:
+                xmin = base_long["Valor"].min()
+                xmax = base_long["Valor"].max()
+                xpad = max((xmax - xmin) * 0.18, 1)
+                fig_comp_ano.update_xaxes(range=[xmin - xpad, xmax + xpad], showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+            fig_comp_ano.update_yaxes(showgrid=False, zeroline=False)
+            fig_comp_ano.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#080f1f",
+                plot_bgcolor="#080f1f",
+                height=520,
+                margin=dict(l=10, r=120, t=10, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            st.plotly_chart(fig_comp_ano, use_container_width=True)
+
+            st.markdown('<div class="section-title">Percentual de alcance frente a 2025</div>', unsafe_allow_html=True)
+            base_alcance = df_comp_principais.dropna(subset=["Alcance 2025"]).copy()
+            base_alcance["Alcance_Label"] = base_alcance["Alcance 2025"].map(formatar_percentual_simples)
+            base_alcance = base_alcance.sort_values("Ordem", ascending=False)
+            fig_alcance = px.bar(
+                base_alcance,
+                x="Alcance 2025",
+                y="Linha",
+                text="Alcance_Label",
+                orientation="h",
+                labels={"Alcance 2025": "", "Linha": ""},
+            )
+            fig_alcance.update_traces(
+                texttemplate="<b>%{text}</b>",
+                textposition="outside",
+                textfont=dict(size=11, color="#FFFFFF", family="Arial Black"),
+                cliponaxis=False,
+            )
+            fig_alcance.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#080f1f",
+                plot_bgcolor="#080f1f",
+                height=440,
+                margin=dict(l=10, r=120, t=10, b=20),
+                showlegend=False,
+            )
+            fig_alcance.update_xaxes(showgrid=False, zeroline=False, tickformat=".0%")
+            fig_alcance.update_yaxes(showgrid=False, zeroline=False)
+            st.plotly_chart(fig_alcance, use_container_width=True)
+
+            st.markdown('<div class="section-title">Tabela comparativa</div>', unsafe_allow_html=True)
+            st.markdown(tabela_html_comparativo(df_comp_principais), unsafe_allow_html=True)
+
+    except Exception as erro:
+        st.info(f"Não consegui carregar a aba Comparativo 2026 x 2025: {erro}")
 
