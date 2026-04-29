@@ -1245,7 +1245,7 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
     )
 
 
-def card_pnl(titulo, valor, variacao=None):
+def card_pnl(titulo, valor, variacao=None, variacao_label="Δ mês anterior"):
     if variacao is None or pd.isna(variacao):
         delta_html = '<div class="kpi-delta delta-neutral">N/D</div>'
     else:
