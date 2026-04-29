@@ -1859,6 +1859,7 @@ def montar_comparativo_principais(df_comp, df_2025_acumulado=None):
                 "Linha": linha_ref,
                 "2025": v25,
                 "2026": v26,
+                "2026 Acumulado": v26,
                 "2025 Acumulado": v25_acum,
                 "Δ R$": delta_rs,
                 "Δ %": delta_pct,
@@ -1882,10 +1883,20 @@ def formatar_percentual_simples(valor):
 
 def tabela_html_comparativo(df):
     html = ['<div class="table-wrap"><table class="dash-table">']
-    cols = ["Linha", "2025", "2026", "Δ R$", "Δ %", "2025 Acumulado", "Alcance 2025"]
+    cols = ["Linha", "2025", "2026", "2026 Acumulado", "Δ R$", "Δ %", "2025 Acumulado", "Alcance 2025"]
+    titulos = {
+        "Linha": "Linha",
+        "2025": "1T2025",
+        "2026": "1T2026",
+        "2026 Acumulado": "2026 Acumulado",
+        "Δ R$": "Δ R$",
+        "Δ %": "Δ %",
+        "2025 Acumulado": "2025 Acumulado",
+        "Alcance 2025": "Alcance 2025",
+    }
     html.append("<thead><tr>")
     for col in cols:
-        html.append(f"<th>{col}</th>")
+        html.append(f"<th>{titulos.get(col, col)}</th>")
     html.append("</tr></thead><tbody>")
 
     for _, row in df.iterrows():
@@ -1894,7 +1905,7 @@ def tabela_html_comparativo(df):
         for col in cols:
             valor = row[col]
             classes = []
-            if col in ["2025", "2026", "Δ R$", "2025 Acumulado"]:
+            if col in ["2025", "2026", "2026 Acumulado", "Δ R$", "2025 Acumulado"]:
                 texto = formatar_numero(valor)
                 if pd.notna(valor) and valor < 0:
                     classes.append("neg-value")
