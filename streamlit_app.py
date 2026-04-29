@@ -228,6 +228,17 @@ CSS = """
         line-height: 1.3;
         text-align: center;
     }
+    table.pnl-matrix tbody tr.main-line td {
+        font-weight: 850 !important;
+    }
+    table.pnl-matrix tbody tr.main-line td:first-child {
+        font-weight: 900 !important;
+    }
+    table.pnl-matrix tbody tr.main-line td.delta-positive,
+    table.pnl-matrix tbody tr.main-line td.delta-negative {
+        font-weight: 850 !important;
+    }
+
     .kpi-delta {
         font-size: .88rem;
         font-weight: 800;
@@ -401,7 +412,7 @@ def formatar_percentual(valor):
         return str(valor)
 
     sinal = "+" if valor > 0 else ""
-    texto = f"Δ {sinal}{valor * 100:,.1f}%"
+    texto = f"{sinal}{valor * 100:,.1f}%"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -1012,7 +1023,7 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
     lista_periodos_pnl = [item["Período"] for item in periodos_pnl]
 
     st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-    col_data, col_produto, col_espaco = st.columns([1, 1, 2])
+    col_data, col_empresa, col_produto, col_espaco = st.columns([1, 1, 1, 1.5])
 
     with col_data:
         data_sel_pnl = st.selectbox(
@@ -1022,12 +1033,31 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
             key=f"data_pnl_{pagina.lower()}",
         )
 
+    with col_empresa:
+        empresa_sel_pnl = st.selectbox(
+            "Empresa",
+            ["Todos", "Banco", "Hipotecária"],
+            index=0,
+            key=f"empresa_pnl_{pagina.lower()}",
+        )
+
+    mapa_empresa_produto = {"Banco": "Consignado", "Hipotecária": "Imobiliário"}
+    if empresa_sel_pnl == "Todos":
+        opcoes_produto = ["Consignado", "Imobiliário", "Total"]
+        index_produto = 2
+        produto_disabled = False
+    else:
+        opcoes_produto = [mapa_empresa_produto[empresa_sel_pnl]]
+        index_produto = 0
+        produto_disabled = True
+
     with col_produto:
         produto_sel_pnl = st.selectbox(
             "Produto",
-            ["Consignado", "Imobiliário", "Total"],
-            index=2,
+            opcoes_produto,
+            index=index_produto,
             key=f"produto_pnl_{pagina.lower()}",
+            disabled=produto_disabled,
         )
 
     if pagina == "Acumulado":
@@ -1076,24 +1106,49 @@ def render_pnl_page(df_pnl_completo, arquivo, pagina="Mensal"):
     base_grafico["Ordem"] = base_grafico["Linha"].map(ordem_linhas)
     base_grafico = base_grafico.sort_values("Ordem", ascending=False)
 
+    base_grafico["Rótulo"] = base_grafico["Valor"].map(formatar_moeda_curta)
+
     fig_comp = px.bar(
         base_grafico,
         x="Valor",
         y="Linha",
         color="Métrica",
+        text="Rótulo",
         orientation="h",
         barmode="group",
         labels={"Valor": "Valor", "Linha": "", "Métrica": ""},
+    )
+    fig_comp.update_traces(
+        texttemplate="<b>%{text}</b>",
+        textposition="outside",
+        textfont=dict(size=11, family="Arial Black", color="#FFFFFF"),
+        cliponaxis=False,
     )
     fig_comp.update_layout(
         template="plotly_dark",
         paper_bgcolor="#080f1f",
         plot_bgcolor="#080f1f",
         height=470,
-        margin=dict(l=10, r=10, t=10, b=10),
+        margin=dict(l=10, r=95, t=10, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        uniformtext_minsize=9,
+        uniformtext_mode="show",
     )
-    fig_comp.update_xaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+
+    if not base_grafico.empty:
+        x_min = base_grafico["Valor"].min()
+        x_max = base_grafico["Valor"].max()
+        x_pad = max((x_max - x_min) * 0.18, 1)
+        fig_comp.update_xaxes(
+            showgrid=False,
+            zeroline=False,
+            tickprefix="R$ ",
+            separatethousands=True,
+            range=[x_min - x_pad, x_max + x_pad],
+        )
+    else:
+        fig_comp.update_xaxes(showgrid=False, zeroline=False, tickprefix="R$ ", separatethousands=True)
+
     fig_comp.update_yaxes(showgrid=False, zeroline=False)
     st.plotly_chart(fig_comp, use_container_width=True)
 
@@ -1550,6 +1605,27 @@ def card_composicao_resultado_total_acumulado(df_pnl_completo, periodo_atual, em
 
 
 
+def filtrar_tabela_resultado_por_empresa(tabela, empresa_sel):
+    if empresa_sel == "Todos" or tabela.empty:
+        return tabela
+
+    col_nome = tabela.columns[0]
+    base = tabela.copy()
+    base["_nome_norm"] = base[col_nome].astype(str).map(normalizar_texto)
+
+    banco_set = {"banco", "equiv patr", "jcp dividendos", "resultado banco"}
+
+    if empresa_sel == "Banco":
+        filtrada = base[base["_nome_norm"].isin(banco_set) | base["_nome_norm"].str.contains("banco", regex=False, na=False)]
+    else:
+        filtrada = base[
+            ~base["_nome_norm"].isin(banco_set)
+            & ~base["_nome_norm"].eq("resultado total")
+        ]
+
+    return filtrada.drop(columns=["_nome_norm"])
+
+
 def adicionar_coluna_variacao_tabela(tabela, periodos_df, periodo_atual):
     coluna_delta = "Δ mês anterior"
     tabela = tabela.copy()
@@ -1686,13 +1762,20 @@ tab_resultados, tab_pnl_mensal, tab_pnl_acum = st.tabs(
 
 with tab_resultados:
     st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-    col_filtro_mes, col_filtro_vazio = st.columns([1, 3])
+    col_filtro_mes, col_filtro_empresa, col_filtro_vazio = st.columns([1, 1, 2])
     with col_filtro_mes:
         periodo_sel = st.selectbox(
             "Mês de referência",
             periodos_disponiveis["Período"].tolist(),
             index=periodo_padrao,
             key="periodo_resultados",
+        )
+    with col_filtro_empresa:
+        empresa_sel_result = st.selectbox(
+            "Empresa",
+            ["Todos", "Banco", "Hipotecária"],
+            index=0,
+            key="empresa_resultados",
         )
 
     df_principais = montar_resultados_principais(df_resultado)
@@ -1808,11 +1891,12 @@ with tab_resultados:
                 df_principais, periodo_sel
             )
             card_resultado_total_acumulado(valor_acumulado, variacao_acumulado, valor_acumulado_anterior, periodo_sel)
-            card_composicao_resultado_total_acumulado(df_pnl_completo_global, periodo_sel)
+            card_composicao_resultado_total_acumulado(df_pnl_completo_global, periodo_sel, empresa_sel_result)
 
     st.markdown('<div class="section-title">Resultado aberto por empresa</div>', unsafe_allow_html=True)
 
     tabela = montar_tabela_empresas_e_total(df_resultado)
+    tabela = filtrar_tabela_resultado_por_empresa(tabela, empresa_sel_result)
     tabela, coluna_delta = adicionar_coluna_variacao_tabela(tabela, periodos_disponiveis, periodo_sel)
 
     tabela_valores = tabela.copy()
